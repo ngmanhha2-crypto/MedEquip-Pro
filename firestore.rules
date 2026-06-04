@@ -1,0 +1,105 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // 1. Global Safety Net Catch-All
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- reusable helper functions ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // --- Entity Validations ---
+    function isValidDevice(data) {
+      return data.id is string && data.id.size() <= 128
+        && data.userId is string && data.userId.size() <= 128
+        && data.userId == request.auth.uid
+        && data.name is string && data.name.size() <= 256
+        && data.model is string && data.model.size() <= 128
+        && data.serialNumber is string && data.serialNumber.size() <= 128
+        && (!data.keys().hasAny(['manufacturer']) || (data.manufacturer is string && data.manufacturer.size() <= 128))
+        && (!data.keys().hasAny(['origin']) || (data.origin is string && data.origin.size() <= 128))
+        && (!data.keys().hasAny(['yearOfProduction']) || (data.yearOfProduction is int && data.yearOfProduction >= 1900 && data.yearOfProduction <= 2100))
+        && (!data.keys().hasAny(['expiryGCP']) || (data.expiryGCP is string && data.expiryGCP.size() <= 32))
+        && (!data.keys().hasAny(['expiryGKD']) || (data.expiryGKD is string && data.expiryGKD.size() <= 32))
+        && (!data.keys().hasAny(['lastMaintenance']) || (data.lastMaintenance is string && data.lastMaintenance.size() <= 32))
+        && (!data.keys().hasAny(['maintenancePeriod']) || (data.maintenancePeriod is int && data.maintenancePeriod >= 0 && data.maintenancePeriod <= 120))
+        && (!data.keys().hasAny(['notes']) || (data.notes is string && data.notes.size() <= 4000))
+        && (!data.keys().hasAny(['noteDate']) || (data.noteDate is string && data.noteDate.size() <= 32))
+        && (!data.keys().hasAny(['notesList']) || (data.notesList is list && data.notesList.size() <= 200));
+    }
+
+    function isValidActivityLog(data) {
+      return data.id is string && data.id.size() <= 128
+        && data.userId is string && data.userId.size() <= 128
+        && data.userId == request.auth.uid
+        && data.deviceId is string && data.deviceId.size() <= 128
+        && data.date is string && data.date.size() <= 32
+        && data.user is string && data.user.size() <= 128
+        && data.type is string && data.type.size() <= 32
+        && data.categoryLabel is string && data.categoryLabel.size() <= 128
+        && data.description is string && data.description.size() <= 2000
+        && (!data.keys().hasAny(['notes']) || (data.notes is string && data.notes.size() <= 4000));
+    }
+
+    // --- Collection Routes ---
+
+    // 2. Devices Collection Rules
+    match /devices/{deviceId} {
+      allow get: if isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      
+      allow create: if isSignedIn() 
+        && isValidId(deviceId) 
+        && deviceId == incoming().id 
+        && isValidDevice(incoming());
+        
+      allow update: if isSignedIn() 
+        && isValidId(deviceId) 
+        && isValidDevice(incoming())
+        && incoming().userId == existing().userId
+        && incoming().id == existing().id
+        && (
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'name', 'model', 'serialNumber', 'manufacturer', 'origin', 
+            'yearOfProduction', 'expiryGCP', 'expiryGKD', 'lastMaintenance', 
+            'maintenancePeriod', 'notes', 'noteDate', 'notesList'
+          ])
+        );
+        
+      allow delete: if isSignedIn() && existing().userId == request.auth.uid;
+    }
+
+    // 3. ActivityLogs Collection Rules
+    match /activityLogs/{logId} {
+      allow get: if isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      
+      allow create: if isSignedIn() 
+        && isValidId(logId) 
+        && logId == incoming().id 
+        && isValidActivityLog(incoming());
+        
+      allow delete: if isSignedIn() && existing().userId == request.auth.uid;
+      
+      // Activity logs are immutable append-only records
+      allow update: if false;
+    }
+  }
+}

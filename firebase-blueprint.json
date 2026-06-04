@@ -1,0 +1,71 @@
+{
+  "entities": {
+    "DeviceNote": {
+      "title": "DeviceNote",
+      "description": "A single note entry belonging to a medical device",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "content": { "type": "string" }
+      },
+      "required": ["id", "date", "content"]
+    },
+    "Device": {
+      "title": "Device",
+      "description": "Medical equipment and its regulatory status details",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "model": { "type": "string" },
+        "serialNumber": { "type": "string" },
+        "manufacturer": { "type": "string" },
+        "origin": { "type": "string" },
+        "yearOfProduction": { "type": "integer" },
+        "expiryGCP": { "type": "string" },
+        "expiryGKD": { "type": "string" },
+        "lastMaintenance": { "type": "string" },
+        "maintenancePeriod": { "type": "integer" },
+        "notes": { "type": "string" },
+        "noteDate": { "type": "string" },
+        "notesList": {
+          "type": "array",
+          "description": "List of historical management notes on this device"
+        }
+      },
+      "required": ["id", "userId", "name", "model", "serialNumber"]
+    },
+    "ActivityLog": {
+      "title": "ActivityLog",
+      "description": "Logging system actions or user adjustments on devices",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "deviceId": { "type": "string" },
+        "date": { "type": "string" },
+        "user": { "type": "string" },
+        "type": {
+          "type": "string",
+          "enum": ["CONFIRM", "UPLOAD", "EDIT", "CREATE", "MANUAL", "DELETE"]
+        },
+        "categoryLabel": { "type": "string" },
+        "description": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "required": ["id", "userId", "deviceId", "date", "user", "type", "categoryLabel", "description"]
+    }
+  },
+  "firestore": {
+    "/devices/{deviceId}": {
+      "schema": "Device",
+      "description": "The collections of devices tracking regulatory and maintenance states"
+    },
+    "/activityLogs/{logId}": {
+      "schema": "ActivityLog",
+      "description": "The collection of audit trails, verification events and logs"
+    }
+  }
+}

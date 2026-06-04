@@ -41,3 +41,14 @@ export interface MaintenanceLog {
   type: 'GCP' | 'GKD' | 'BD';
   note: string;
 }
+
+export interface ActivityLog {
+  id: string;
+  deviceId: string;
+  date: string;
+  user: string;
+  type: 'CONFIRM' | 'UPLOAD' | 'EDIT' | 'CREATE' | 'MANUAL' | 'DELETE';
+  categoryLabel: string;
+  description: string;
+  notes?: string;
+}

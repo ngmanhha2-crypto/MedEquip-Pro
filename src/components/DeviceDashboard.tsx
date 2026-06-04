@@ -30,7 +30,7 @@ import {
   Loader2
 } from 'lucide-react';
 import { MOCK_DEVICES } from '../mockData';
-import { Device, DeviceNote } from '../types';
+import { Device, DeviceNote, ActivityLog } from '../types';
 import { getDaysRemaining, getStatusColor, formatDisplayDate, checkReminders } from '../utils/dateUtils';
 import {
   googleSignIn,
@@ -44,20 +44,20 @@ import {
   formatBytes,
   DriveFile
 } from '../utils/googleDrive';
+import {
+  auth,
+  fetchDevicesFromFirestore,
+  saveDeviceToFirestore,
+  updateDeviceInFirestore,
+  deleteDeviceFromFirestore,
+  fetchActivityLogsFromFirestore,
+  saveActivityLogToFirestore,
+  deleteActivityLogFromFirestore
+} from '../utils/firebaseService';
 import { motion, AnimatePresence } from 'motion/react';
 import * as XLSX from 'xlsx';
 import { parseISO, addMonths, differenceInDays, format } from 'date-fns';
 
-export interface ActivityLog {
-  id: string;
-  deviceId: string;
-  date: string;
-  user: string;
-  type: 'CONFIRM' | 'UPLOAD' | 'EDIT' | 'CREATE' | 'MANUAL' | 'DELETE';
-  categoryLabel: string;
-  description: string;
-  notes?: string;
-}
 
 const DeviceDashboard: React.FC = () => {
   const [devices, setDevices] = useState<Device[]>(MOCK_DEVICES);
@@ -91,7 +91,7 @@ const DeviceDashboard: React.FC = () => {
     return () => unsubscribe();
   }, []);
 
-  const handleSaveNote = (id: string, notesList: DeviceNote[]) => {
+  const handleSaveNote = async (id: string, notesList: DeviceNote[]) => {
     const sortedNotesList = [...notesList].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     const latestNote = sortedNotesList[0];
     const notesValue = latestNote ? latestNote.content : '';
@@ -103,7 +103,13 @@ const DeviceDashboard: React.FC = () => {
       setSelectedNoteDevice(prev => prev ? { ...prev, notes: notesValue, noteDate: noteDateValue, notesList } : null);
     }
 
-    const deviceName = devices.find(d => d.id === id)?.name || 'Thiết bị';
+    const deviceObj = devices.find(d => d.id === id);
+    if (deviceObj && isDriveConnected && auth.currentUser) {
+      const updatedDevice = { ...deviceObj, notes: notesValue, noteDate: noteDateValue, notesList };
+      await updateDeviceInFirestore(auth.currentUser.uid, updatedDevice);
+    }
+
+    const deviceName = deviceObj?.name || 'Thiết bị';
     const newAutoLog: ActivityLog = {
       id: `note-log-${Math.random().toString(36).substring(2, 9)}`,
       deviceId: id,
@@ -117,6 +123,9 @@ const DeviceDashboard: React.FC = () => {
         : 'Đã xóa toàn bộ ghi chú.'
     };
     setActivityLogs(prev => [newAutoLog, ...prev]);
+    if (isDriveConnected && auth.currentUser) {
+      await saveActivityLogToFirestore(auth.currentUser.uid, newAutoLog);
+    }
   };
 
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>(() => [
@@ -196,6 +205,126 @@ const DeviceDashboard: React.FC = () => {
     }
   ]);
 
+  const [loadingData, setLoadingData] = useState(false);
+
+  React.useEffect(() => {
+    let active = true;
+    const syncData = async () => {
+      const currentUser = auth.currentUser;
+      if (isDriveConnected && currentUser) {
+        setLoadingData(true);
+        try {
+          const firestoreDevices = await fetchDevicesFromFirestore(currentUser.uid);
+          if (!active) return;
+
+          if (firestoreDevices && firestoreDevices.length > 0) {
+            setDevices(firestoreDevices);
+            const firestoreLogs = await fetchActivityLogsFromFirestore(currentUser.uid);
+            if (active) {
+              setActivityLogs(firestoreLogs || []);
+            }
+          } else {
+            const seedDevices = MOCK_DEVICES.map(d => ({
+              ...d,
+              userId: currentUser.uid
+            }));
+            
+            for (const d of seedDevices) {
+              await saveDeviceToFirestore(currentUser.uid, d);
+            }
+
+            const initialLogsSeed: ActivityLog[] = [
+              {
+                id: 'log-1',
+                deviceId: '1',
+                date: '2025-12-01',
+                user: 'Nguyễn Mạnh Hà',
+                type: 'CONFIRM',
+                categoryLabel: 'Bảo trì',
+                description: 'Hoàn thành bảo dưỡng định kỳ nâng cao.',
+                notes: 'Hãng Siemens thực hiện, vệ sinh bóng phát tia X và cân chỉnh liều lượng phát xạ.'
+              },
+              {
+                id: 'log-2',
+                deviceId: '1',
+                date: '2025-05-20',
+                user: 'Admin',
+                type: 'CONFIRM',
+                categoryLabel: 'Kiểm định',
+                description: 'Kiểm định an toàn bức xạ phòng máy DR (GKĐ).',
+                notes: 'Thực hiện bởi Trung tâm Kiểm định thiết bị Bức xạ.'
+              },
+              {
+                id: 'log-3',
+                deviceId: '1',
+                date: '2024-01-20',
+                user: 'Hệ thống',
+                type: 'CREATE',
+                categoryLabel: 'Nhập máy',
+                description: 'Khởi tạo thông tin hệ thống máy X-quang DR.'
+              }
+            ].map(log => ({
+              ...log,
+              userId: currentUser.uid
+            } as any as ActivityLog));
+
+            for (const log of initialLogsSeed) {
+              await saveActivityLogToFirestore(currentUser.uid, log);
+            }
+
+            if (active) {
+              setDevices(seedDevices);
+              setActivityLogs(initialLogsSeed);
+            }
+          }
+        } catch (err: any) {
+          console.error("Lỗi khi đồng bộ dữ liệu Firestore:", err);
+        } finally {
+          if (active) setLoadingData(false);
+        }
+      } else {
+        setDevices(MOCK_DEVICES);
+        setActivityLogs([
+          {
+            id: 'log-1',
+            deviceId: '1',
+            date: '2025-12-01',
+            user: 'Nguyễn Mạnh Hà',
+            type: 'CONFIRM',
+            categoryLabel: 'Bảo trì',
+            description: 'Hoàn thành bảo dưỡng định kỳ nâng cao.',
+            notes: 'Hãng Siemens thực hiện, vệ sinh bóng phát tia X và cân chỉnh liều lượng phát xạ.'
+          },
+          {
+            id: 'log-2',
+            deviceId: '1',
+            date: '2025-05-20',
+            user: 'Admin',
+            type: 'CONFIRM',
+            categoryLabel: 'Kiểm định',
+            description: 'Kiểm định an toàn bức xạ phòng máy DR (GKĐ).',
+            notes: 'Thực hiện bởi Trung tâm Kiểm định thiết bị Bức xạ.'
+          },
+          {
+            id: 'log-3',
+            deviceId: '1',
+            date: '2024-01-20',
+            user: 'Hệ thống',
+            type: 'CREATE',
+            categoryLabel: 'Nhập máy',
+            description: 'Khởi tạo hồ sơ thiết bị ban đầu trên hệ thống.',
+            notes: ''
+          }
+        ]);
+      }
+    };
+
+    syncData();
+    return () => {
+      active = false;
+    };
+  }, [isDriveConnected, driveUserEmail]);
+
   const filteredDevices = useMemo(() => {
     return devices.filter(d => {
       const gkdDays = getDaysRemaining(d.expiryGKD);
@@ -233,7 +362,7 @@ const DeviceDashboard: React.FC = () => {
     XLSX.writeFile(wb, "Danh_muc_thiet_bi_yte.xlsx");
   };
 
-  const handleConfirmDone = (id: string, type: 'GCP' | 'GKD' | 'BD', manualDate?: string) => {
+  const handleConfirmDone = async (id: string, type: 'GCP' | 'GKD' | 'BD', manualDate?: string) => {
     let logDescription = '';
     let category = '';
     const targetDeviceName = devices.find(d => d.id === id)?.name || 'Thiết bị';
@@ -259,6 +388,16 @@ const DeviceDashboard: React.FC = () => {
       return d;
     }));
 
+    const targetDevice = devices.find(d => d.id === id);
+    if (targetDevice && isDriveConnected && auth.currentUser) {
+      const targetDate = manualDate || new Date().toISOString().split('T')[0];
+      const updatedD = { ...targetDevice };
+      if (type === 'GKD') updatedD.expiryGKD = targetDate;
+      if (type === 'GCP') updatedD.expiryGCP = targetDate;
+      if (type === 'BD') updatedD.lastMaintenance = targetDate;
+      await updateDeviceInFirestore(auth.currentUser.uid, updatedD);
+    }
+
     // Auto-append to activityLogs
     const newAutoLog: ActivityLog = {
       id: `auto-log-${Math.random().toString(36).substr(2, 9)}`,
@@ -271,21 +410,33 @@ const DeviceDashboard: React.FC = () => {
       notes: manualDate ? `Ngày cập nhật thủ công: ${formatDisplayDate(manualDate)}` : 'Hệ thống tự động ghi nhận ngày hiện tại.'
     };
     setActivityLogs(prev => [newAutoLog, ...prev]);
+    if (isDriveConnected && auth.currentUser) {
+      await saveActivityLogToFirestore(auth.currentUser.uid, newAutoLog);
+    }
 
     if (!manualDate) {
       alert('Đã xác nhận hoàn tất và cập nhật ngày hiện tại!');
     }
   };
 
-  const handleDeleteDevice = (id: string) => {
+  const handleDeleteDevice = async (id: string) => {
     if (confirm('Bạn có chắc chắn muốn xóa thiết bị này khỏi danh sách?')) {
       setDevices(prev => prev.filter(d => d.id !== id));
       // Remove logs associated with the deleted device
       setActivityLogs(prev => prev.filter(log => log.deviceId !== id));
+
+      if (isDriveConnected && auth.currentUser) {
+        await deleteDeviceFromFirestore(auth.currentUser.uid, id);
+        // Clean related logs from cloud database
+        const logsToDelete = activityLogs.filter(log => log.deviceId === id);
+        for (const log of logsToDelete) {
+          await deleteActivityLogFromFirestore(auth.currentUser.uid, log.id);
+        }
+      }
     }
   };
 
-  const handleSaveDevice = (deviceData: Partial<Device>) => {
+  const handleSaveDevice = async (deviceData: Partial<Device>) => {
     const todayStr = new Date().toISOString().split('T')[0];
     if (editingDevice) {
       const notesChanged = deviceData.notes !== editingDevice.notes;
@@ -314,7 +465,12 @@ const DeviceDashboard: React.FC = () => {
         }
       }
 
-      setDevices(prev => prev.map(d => d.id === editingDevice.id ? { ...d, ...deviceData, noteDate: updatedNoteDate, notesList: updatedNotesList } as Device : d));
+      const updatedDevice = { ...editingDevice, ...deviceData, noteDate: updatedNoteDate, notesList: updatedNotesList } as Device;
+      setDevices(prev => prev.map(d => d.id === editingDevice.id ? updatedDevice : d));
+      
+      if (isDriveConnected && auth.currentUser) {
+        await updateDeviceInFirestore(auth.currentUser.uid, updatedDevice);
+      }
       
       const newAutoLog: ActivityLog = {
         id: `auto-${Math.random().toString(36).substr(2, 9)}`,
@@ -327,6 +483,9 @@ const DeviceDashboard: React.FC = () => {
         notes: `Năm sản xuất: ${deviceData.yearOfProduction || editingDevice.yearOfProduction}, Chu kỳ bảo trì: ${deviceData.maintenancePeriod || editingDevice.maintenancePeriod} tháng.`
       };
       setActivityLogs(prev => [newAutoLog, ...prev]);
+      if (isDriveConnected && auth.currentUser) {
+        await saveActivityLogToFirestore(auth.currentUser.uid, newAutoLog);
+      }
     } else {
       const generatedId = Math.random().toString(36).substr(2, 9);
       const initialNotesList = deviceData.notes ? [{
@@ -343,6 +502,10 @@ const DeviceDashboard: React.FC = () => {
       } as Device;
       setDevices(prev => [newDevice, ...prev]);
 
+      if (isDriveConnected && auth.currentUser) {
+        await saveDeviceToFirestore(auth.currentUser.uid, newDevice);
+      }
+
       const newAutoLog: ActivityLog = {
         id: `auto-${Math.random().toString(36).substr(2, 9)}`,
         deviceId: generatedId,
@@ -354,6 +517,9 @@ const DeviceDashboard: React.FC = () => {
         notes: `Model: ${newDevice.model} | Số serial: ${newDevice.serialNumber} | Xuất xứ: ${newDevice.origin}`
       };
       setActivityLogs(prev => [newAutoLog, ...prev]);
+      if (isDriveConnected && auth.currentUser) {
+        await saveActivityLogToFirestore(auth.currentUser.uid, newAutoLog);
+      }
     }
     setIsModalOpen(false);
     setEditingDevice(null);
@@ -576,7 +742,7 @@ const DeviceDashboard: React.FC = () => {
               driveFolderIds={driveFolderIds}
               setDriveFolderIds={setDriveFolderIds}
               setActiveTab={setActiveTab}
-              onActionLog={(deviceId, text, type) => {
+              onActionLog={async (deviceId, text, type) => {
                 const newAutoLog: ActivityLog = {
                   id: `doc-log-${Math.random().toString(36).substr(2, 9)}`,
                   deviceId,
@@ -588,6 +754,9 @@ const DeviceDashboard: React.FC = () => {
                   notes: type === 'UPLOAD' ? 'Nhật ký hệ thống: Tải hồ sơ lên thành công.' : 'Nhật ký hệ thống: Đã xóa hồ sơ tài liệu khỏi thiết bị.'
                 };
                 setActivityLogs(prev => [newAutoLog, ...prev]);
+                if (isDriveConnected && auth.currentUser) {
+                  await saveActivityLogToFirestore(auth.currentUser.uid, newAutoLog);
+                }
               }}
             />
           )}
@@ -647,10 +816,18 @@ const DeviceDashboard: React.FC = () => {
             device={selectedHistoryDevice}
             onClose={() => setSelectedHistoryDevice(null)}
             logs={activityLogs.filter(log => log.deviceId === selectedHistoryDevice?.id)}
-            onAddLog={(newLog) => setActivityLogs(prev => [newLog, ...prev])}
-            onDeleteLog={(logId) => {
+            onAddLog={async (newLog) => {
+              setActivityLogs(prev => [newLog, ...prev]);
+              if (isDriveConnected && auth.currentUser) {
+                await saveActivityLogToFirestore(auth.currentUser.uid, newLog);
+              }
+            }}
+            onDeleteLog={async (logId) => {
               if (confirm('Bạn có chắc muốn xóa bản ghi lịch sử này?')) {
                 setActivityLogs(prev => prev.filter(l => l.id !== logId));
+                if (isDriveConnected && auth.currentUser) {
+                  await deleteActivityLogFromFirestore(auth.currentUser.uid, logId);
+                }
               }
             }}
           />
