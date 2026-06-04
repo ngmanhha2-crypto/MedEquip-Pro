@@ -1,0 +1,13 @@
+{
+  "name": "MedEquip Pro - X-Ray Manager",
+  "description": "Hệ thống quản lý hồ sơ pháp lý, kiểm định và bảo trì tự động cho thiết bị y tế phòng X-quang.",
+  "requestFramePermissions": [
+    "notifications"
+  ],
+  "majorCapabilities": [
+    "Quản lý hồ sơ thiết bị",
+    "Cảnh báo tự động",
+    "Xuất báo cáo Excel",
+    "Theo dõi lịch sử bảo trì"
+  ]
+}
