@@ -57,6 +57,13 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import * as XLSX from 'xlsx';
 import { parseISO, addMonths, differenceInDays, format } from 'date-fns';
+import { 
+  onAuthStateChanged, 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, 
+  signOut as firebaseSignOut,
+  User as FirebaseUser
+} from 'firebase/auth';
 
 
 const DeviceDashboard: React.FC = () => {
@@ -69,27 +76,190 @@ const DeviceDashboard: React.FC = () => {
   const [selectedNoteDevice, setSelectedNoteDevice] = useState<Device | null>(null);
   const [activeTab, setActiveTab] = useState<'inventory' | 'maintenance' | 'legal' | 'settings'>('inventory');
 
+  // Custom warning thresholds configuration days (Giấy phép GCP, Kiểm định GKĐ, Bảo dưỡng BD)
+  const [warningDaysGCP, setWarningDaysGCP] = useState<number>(() => {
+    const val = localStorage.getItem('medequip_warning_days_gcp');
+    return val ? parseInt(val) : 30;
+  });
+  const [warningDaysGKD, setWarningDaysGKD] = useState<number>(() => {
+    const val = localStorage.getItem('medequip_warning_days_gkd');
+    return val ? parseInt(val) : 30;
+  });
+  const [warningDaysBD, setWarningDaysBD] = useState<number>(() => {
+    const val = localStorage.getItem('medequip_warning_days_bd');
+    return val ? parseInt(val) : 30;
+  });
+
   // Shared Google Drive Integration States
-  const [isDriveConnected, setIsDriveConnected] = useState(false);
-  const [driveUserEmail, setDriveUserEmail] = useState<string | null>(null);
+  const [isDriveConnected, setIsDriveConnected] = useState(() => {
+    return localStorage.getItem('medequip_google_connected') === 'true';
+  });
+  const [driveUserEmail, setDriveUserEmail] = useState<string | null>(() => {
+    return localStorage.getItem('medequip_google_email');
+  });
   const [authLoading, setAuthLoading] = useState(false);
+  
+  // Primary Email/Password Auth States
+  const [appUser, setAppUser] = useState<FirebaseUser | null>(null);
+  const [isAuthChecking, setIsAuthChecking] = useState(true);
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [isRegisterScreen, setIsRegisterScreen] = useState(false);
   const [driveFiles, setDriveFiles] = useState<Record<string, DriveFile[]>>({});
   const [driveFolderIds, setDriveFolderIds] = useState<Record<string, string>>({});
+  const [showAuthDomainError, setShowAuthDomainError] = useState(false);
+  const [failedDomain, setFailedDomain] = useState('');
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    confirmText?: string;
+    variant?: 'danger' | 'warning' | 'info';
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+  });
+
+  const askConfirmation = (title: string, message: string, onConfirm: () => void, variant: 'danger' | 'warning' | 'info' = 'danger', confirmText?: string) => {
+    setConfirmDialog({
+      isOpen: true,
+      title,
+      message,
+      onConfirm: () => {
+        onConfirm();
+        setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+      },
+      variant,
+      confirmText
+    });
+  };
 
   // Initialize Auth state listener globally
   React.useEffect(() => {
-    const unsubscribe = initAuth(
+    // 1. Google Drive auth listener
+    const unsubscribeDrive = initAuth(
       (user, token) => {
         setIsDriveConnected(true);
-        setDriveUserEmail(user.email || 'Người dùng Google');
+        const storedEmail = localStorage.getItem('medequip_google_email') || user.email || 'Người dùng Google';
+        setDriveUserEmail(storedEmail);
       },
       () => {
-        setIsDriveConnected(false);
-        setDriveUserEmail(null);
+        // If not in localstorage, set offline
+        if (localStorage.getItem('medequip_google_connected') !== 'true') {
+          setIsDriveConnected(false);
+          setDriveUserEmail(null);
+        }
       }
     );
-    return () => unsubscribe();
+
+    // 2. Primary Email/Password auth listener
+    const unsubscribePrimary = onAuthStateChanged(auth, (user) => {
+      setAppUser(user);
+      setIsAuthChecking(false);
+    });
+
+    return () => {
+      unsubscribeDrive();
+      unsubscribePrimary();
+    };
   }, []);
+
+  const handleConnectDrive = async () => {
+    setAuthLoading(true);
+    try {
+      const res = await googleSignIn();
+      if (res) {
+        setIsDriveConnected(true);
+        setDriveUserEmail(res.email || 'Người dùng Google');
+        setDriveFolderIds({});
+        alert('Kênh lưu trữ Google Drive đã được kết nối thành công!');
+      }
+    } catch (err: any) {
+      console.error('Lỗi khi đăng nhập Google:', err);
+      if (err.message && (err.message.includes("auth/unauthorized-domain") || err.code === "auth/unauthorized-domain" || String(err).includes("unauthorized-domain"))) {
+        setFailedDomain(window.location.hostname);
+        setShowAuthDomainError(true);
+      } else {
+        alert(`Đăng nhập Google Drive thất bại: ${err.message || err}`);
+      }
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleDisconnectDrive = async () => {
+    askConfirmation(
+      'Ngắt kết nối Google Drive',
+      'Bạn có chắc chắn muốn ngắt kết nối Google Drive? Các tệp tài học lý sẽ tạm thời hiển thị ở trạng thái ngoại tuyến.',
+      async () => {
+        setAuthLoading(true);
+        try {
+          await logout();
+          setIsDriveConnected(false);
+          setDriveUserEmail(null);
+        } catch (err: any) {
+          alert(`Lỗi khi đăng xuất: ${err.message || err}`);
+        } finally {
+          setAuthLoading(false);
+        }
+      },
+      'warning',
+      'Ngắt kết nối'
+    );
+  };
+
+  const handleSignOutSystem = async () => {
+    askConfirmation(
+      'Đăng xuất hệ thống',
+      'Bạn muốn đăng xuất khỏi tài khoản quản trị thiết bị?',
+      async () => {
+        try {
+          setIsAuthChecking(true);
+          await firebaseSignOut(auth);
+          setDevices([]);
+        } catch (err: any) {
+          alert(`Đăng xuất thất bại: ${err.message}`);
+        } finally {
+          setIsAuthChecking(false);
+        }
+      },
+      'warning',
+      'Đăng xuất'
+    );
+  };
+
+  const handleAuthSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!authEmail || !authPassword) {
+      alert('Vui lòng điền đầy đủ tài khoản và mật khẩu!');
+      return;
+    }
+    setAuthLoading(true);
+    try {
+      if (isRegisterScreen) {
+        await createUserWithEmailAndPassword(auth, authEmail, authPassword);
+        alert('Tạo tài khoản quản trị thành công!');
+      } else {
+        await signInWithEmailAndPassword(auth, authEmail, authPassword);
+      }
+    } catch (err: any) {
+      console.error(err);
+      let errorMsg = err.message || String(err);
+      if (errorMsg.includes("auth/invalid-credential")) {
+        errorMsg = "Sai email hoặc mật khẩu. Vui lòng kiểm tra lại!";
+      } else if (errorMsg.includes("auth/weak-password")) {
+        errorMsg = "Mật khẩu quá yếu (tối thiểu 6 ký tự).";
+      } else if (errorMsg.includes("auth/email-already-in-use")) {
+        errorMsg = "Email này đã được sử dụng bởi một tài khoản khác.";
+      }
+      alert(`Lỗi xác thực: ${errorMsg}`);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
 
   const handleSaveNote = async (id: string, notesList: DeviceNote[]) => {
     const sortedNotesList = [...notesList].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
@@ -104,7 +274,7 @@ const DeviceDashboard: React.FC = () => {
     }
 
     const deviceObj = devices.find(d => d.id === id);
-    if (deviceObj && isDriveConnected && auth.currentUser) {
+    if (deviceObj && auth.currentUser) {
       const updatedDevice = { ...deviceObj, notes: notesValue, noteDate: noteDateValue, notesList };
       await updateDeviceInFirestore(auth.currentUser.uid, updatedDevice);
     }
@@ -123,7 +293,7 @@ const DeviceDashboard: React.FC = () => {
         : 'Đã xóa toàn bộ ghi chú.'
     };
     setActivityLogs(prev => [newAutoLog, ...prev]);
-    if (isDriveConnected && auth.currentUser) {
+    if (auth.currentUser) {
       await saveActivityLogToFirestore(auth.currentUser.uid, newAutoLog);
     }
   };
@@ -211,7 +381,7 @@ const DeviceDashboard: React.FC = () => {
     let active = true;
     const syncData = async () => {
       const currentUser = auth.currentUser;
-      if (isDriveConnected && currentUser) {
+      if (currentUser) {
         setLoadingData(true);
         try {
           const firestoreDevices = await fetchDevicesFromFirestore(currentUser.uid);
@@ -323,7 +493,7 @@ const DeviceDashboard: React.FC = () => {
     return () => {
       active = false;
     };
-  }, [isDriveConnected, driveUserEmail]);
+  }, [appUser]);
 
   const filteredDevices = useMemo(() => {
     return devices.filter(d => {
@@ -335,8 +505,8 @@ const DeviceDashboard: React.FC = () => {
       if (filterStatus === 'all') return isSearchMatch;
       
       const isExpired = (gkdDays !== null && gkdDays < 0) || (gcpDays !== null && gcpDays < 0);
-      const isWarning = (gkdDays !== null && gkdDays >= 0 && gkdDays <= 30) || 
-                       (gcpDays !== null && gcpDays >= 0 && gcpDays <= 30);
+      const isWarning = (gkdDays !== null && gkdDays >= 0 && gkdDays <= warningDaysGKD) || 
+                       (gcpDays !== null && gcpDays >= 0 && gcpDays <= warningDaysGCP);
       
       if (filterStatus === 'expired') return isSearchMatch && isExpired;
       if (filterStatus === 'warning') return isSearchMatch && isWarning;
@@ -344,7 +514,7 @@ const DeviceDashboard: React.FC = () => {
       
       return isSearchMatch;
     });
-  }, [devices, searchTerm, filterStatus]);
+  }, [devices, searchTerm, filterStatus, warningDaysGKD, warningDaysGCP]);
 
   const handleExportExcel = () => {
     const ws = XLSX.utils.json_to_sheet(devices.map(d => ({
@@ -389,7 +559,7 @@ const DeviceDashboard: React.FC = () => {
     }));
 
     const targetDevice = devices.find(d => d.id === id);
-    if (targetDevice && isDriveConnected && auth.currentUser) {
+    if (targetDevice && auth.currentUser) {
       const targetDate = manualDate || new Date().toISOString().split('T')[0];
       const updatedD = { ...targetDevice };
       if (type === 'GKD') updatedD.expiryGKD = targetDate;
@@ -410,7 +580,7 @@ const DeviceDashboard: React.FC = () => {
       notes: manualDate ? `Ngày cập nhật thủ công: ${formatDisplayDate(manualDate)}` : 'Hệ thống tự động ghi nhận ngày hiện tại.'
     };
     setActivityLogs(prev => [newAutoLog, ...prev]);
-    if (isDriveConnected && auth.currentUser) {
+    if (auth.currentUser) {
       await saveActivityLogToFirestore(auth.currentUser.uid, newAutoLog);
     }
 
@@ -420,20 +590,57 @@ const DeviceDashboard: React.FC = () => {
   };
 
   const handleDeleteDevice = async (id: string) => {
-    if (confirm('Bạn có chắc chắn muốn xóa thiết bị này khỏi danh sách?')) {
-      setDevices(prev => prev.filter(d => d.id !== id));
-      // Remove logs associated with the deleted device
-      setActivityLogs(prev => prev.filter(log => log.deviceId !== id));
+    askConfirmation(
+      'Xóa thiết bị khỏi hệ thống',
+      'Bạn có chắc chắn muốn xóa thiết bị này khỏi danh sách? Thao tác này sẽ xóa toàn bộ nhật ký liên quan ngoại tuyến và trực tuyến.',
+      async () => {
+        const originalDevices = [...devices];
+        const originalLogs = [...activityLogs];
 
-      if (isDriveConnected && auth.currentUser) {
-        await deleteDeviceFromFirestore(auth.currentUser.uid, id);
-        // Clean related logs from cloud database
-        const logsToDelete = activityLogs.filter(log => log.deviceId === id);
-        for (const log of logsToDelete) {
-          await deleteActivityLogFromFirestore(auth.currentUser.uid, log.id);
+        // Thao tác xóa nhanh (optimistic update) trên giao diện
+        setDevices(prev => prev.filter(d => d.id !== id));
+        setActivityLogs(prev => prev.filter(log => log.deviceId !== id));
+
+        if (auth.currentUser) {
+          try {
+            await deleteDeviceFromFirestore(auth.currentUser.uid, id);
+            
+            // Tìm danh sách nhật ký liên quan từ bản sao cũ để xóa trên Firestore
+            const logsToDelete = originalLogs.filter(log => log.deviceId === id);
+            for (const log of logsToDelete) {
+              await deleteActivityLogFromFirestore(auth.currentUser.uid, log.id);
+            }
+          } catch (error: any) {
+            console.error("Lỗi khi xóa thiết bị trong cơ sở dữ liệu:", error);
+            
+            // Hoàn tác lại trạng thái cũ nếu xảy ra lỗi
+            setDevices(originalDevices);
+            setActivityLogs(originalLogs);
+
+            let msg = "Không thể xóa dữ liệu từ xa.";
+            if (error instanceof Error) {
+              try {
+                const parsed = JSON.parse(error.message);
+                if (parsed.error && parsed.error.includes("permission-denied")) {
+                  msg = "Lỗi phân quyền Firestore (Permission Denied). Rule bảo mật hiện tại không cho phép xóa bản ghi này.";
+                } else {
+                  msg = `Lỗi từ hệ thống cơ sở dữ liệu: ${parsed.error || error.message}`;
+                }
+              } catch {
+                if (error.message.includes("permission-denied")) {
+                  msg = "Lỗi phân quyền (Permission Denied). Bạn không có quyền xóa thiết bị này.";
+                } else {
+                  msg = `Lỗi xảy ra: ${error.message}`;
+                }
+              }
+            }
+            alert(`Không thể xóa thiết bị!\n\nChi tiết: ${msg}`);
+          }
         }
-      }
-    }
+      },
+      'danger',
+      'Xóa thiết bị'
+    );
   };
 
   const handleSaveDevice = async (deviceData: Partial<Device>) => {
@@ -468,7 +675,7 @@ const DeviceDashboard: React.FC = () => {
       const updatedDevice = { ...editingDevice, ...deviceData, noteDate: updatedNoteDate, notesList: updatedNotesList } as Device;
       setDevices(prev => prev.map(d => d.id === editingDevice.id ? updatedDevice : d));
       
-      if (isDriveConnected && auth.currentUser) {
+      if (auth.currentUser) {
         await updateDeviceInFirestore(auth.currentUser.uid, updatedDevice);
       }
       
@@ -483,7 +690,7 @@ const DeviceDashboard: React.FC = () => {
         notes: `Năm sản xuất: ${deviceData.yearOfProduction || editingDevice.yearOfProduction}, Chu kỳ bảo trì: ${deviceData.maintenancePeriod || editingDevice.maintenancePeriod} tháng.`
       };
       setActivityLogs(prev => [newAutoLog, ...prev]);
-      if (isDriveConnected && auth.currentUser) {
+      if (auth.currentUser) {
         await saveActivityLogToFirestore(auth.currentUser.uid, newAutoLog);
       }
     } else {
@@ -502,7 +709,7 @@ const DeviceDashboard: React.FC = () => {
       } as Device;
       setDevices(prev => [newDevice, ...prev]);
 
-      if (isDriveConnected && auth.currentUser) {
+      if (auth.currentUser) {
         await saveDeviceToFirestore(auth.currentUser.uid, newDevice);
       }
 
@@ -517,7 +724,7 @@ const DeviceDashboard: React.FC = () => {
         notes: `Model: ${newDevice.model} | Số serial: ${newDevice.serialNumber} | Xuất xứ: ${newDevice.origin}`
       };
       setActivityLogs(prev => [newAutoLog, ...prev]);
-      if (isDriveConnected && auth.currentUser) {
+      if (auth.currentUser) {
         await saveActivityLogToFirestore(auth.currentUser.uid, newAutoLog);
       }
     }
@@ -535,11 +742,11 @@ const DeviceDashboard: React.FC = () => {
     const warning = devices.filter(d => {
       const gkd = getDaysRemaining(d.expiryGKD);
       const gcp = getDaysRemaining(d.expiryGCP);
-      return (gkd !== null && gkd >= 0 && gkd <= 30) || (gcp !== null && gcp >= 0 && gcp <= 30);
+      return (gkd !== null && gkd >= 0 && gkd <= warningDaysGKD) || (gcp !== null && gcp >= 0 && gcp <= warningDaysGCP);
     }).length;
 
     return { total: devices.length, expired, warning, ok: devices.length - expired - warning };
-  }, [devices]);
+  }, [devices, warningDaysGKD, warningDaysGCP]);
 
   // Handle mock notifications
   React.useEffect(() => {
@@ -547,13 +754,120 @@ const DeviceDashboard: React.FC = () => {
       const gkdDays = getDaysRemaining(d.expiryGKD);
       const gcpDays = getDaysRemaining(d.expiryGCP);
       
-      const gkdReminder = checkReminders(gkdDays);
-      const gcpReminder = checkReminders(gcpDays);
+      const gkdReminder = checkReminders(gkdDays, warningDaysGKD);
+      const gcpReminder = checkReminders(gcpDays, warningDaysGCP);
       
       if (gkdReminder) console.log(`[NOTIF] ${d.name} (GKĐ): ${gkdReminder}`);
       if (gcpReminder) console.log(`[NOTIF] ${d.name} (GCP): ${gcpReminder}`);
     });
-  }, [devices]);
+  }, [devices, warningDaysGKD, warningDaysGCP]);
+
+  // Sync warning thresholds to localStorage automatically
+  React.useEffect(() => {
+    localStorage.setItem('medequip_warning_days_gcp', warningDaysGCP.toString());
+  }, [warningDaysGCP]);
+
+  React.useEffect(() => {
+    localStorage.setItem('medequip_warning_days_gkd', warningDaysGKD.toString());
+  }, [warningDaysGKD]);
+
+  React.useEffect(() => {
+    localStorage.setItem('medequip_warning_days_bd', warningDaysBD.toString());
+  }, [warningDaysBD]);
+
+  if (isAuthChecking) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
+        <Loader2 className="animate-spin text-blue-600 mb-4" size={48} />
+        <p className="text-sm font-semibold text-slate-500 font-mono tracking-wide">ĐANG TẢI HỆ THỐNG...</p>
+      </div>
+    );
+  }
+
+  if (!appUser) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4 font-sans relative overflow-hidden">
+        {/* Abstract background graphics to elevate craft */}
+        <div className="absolute -top-40 -left-40 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl"></div>
+        <div className="absolute -bottom-40 -right-40 w-96 h-96 bg-teal-500/10 rounded-full blur-3xl"></div>
+
+        <motion.div 
+          initial={{ opacity: 0, y: 30 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6 }}
+          className="w-full max-w-md bg-white border border-slate-100 rounded-3xl shadow-xl overflow-hidden p-8 z-10"
+        >
+          <div className="text-center mb-8">
+            <div className="mx-auto w-12 h-12 bg-blue-600 text-white rounded-2xl flex items-center justify-center text-xl font-black mb-4 shadow-md shadow-blue-500/20">
+              M
+            </div>
+            <h1 className="text-2xl font-black text-slate-900 tracking-tight leading-tight">MedEquip Pro</h1>
+            <p className="text-sm text-slate-500 mt-1.5">Hệ thống Quản lý & Giám sát Thiết bị Y tế</p>
+          </div>
+
+          <div className="flex border-b border-slate-100 mb-6 font-semibold">
+            <button
+              onClick={() => setIsRegisterScreen(false)}
+              className={`flex-1 pb-3 text-sm text-center border-b-2 transition-all cursor-pointer ${!isRegisterScreen ? 'text-blue-600 border-blue-600 font-bold' : 'text-slate-400 border-transparent hover:text-slate-600'}`}
+              type="button"
+            >
+              Đăng nhập
+            </button>
+            <button
+              onClick={() => setIsRegisterScreen(true)}
+              className={`flex-1 pb-3 text-sm text-center border-b-2 transition-all cursor-pointer ${isRegisterScreen ? 'text-blue-600 border-blue-600 font-bold' : 'text-slate-400 border-transparent hover:text-slate-600'}`}
+              type="button"
+            >
+              Đăng ký tài khoản
+            </button>
+          </div>
+
+          <form onSubmit={handleAuthSubmit} className="space-y-4">
+            <div>
+              <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-2">Địa chỉ Email</label>
+              <input
+                type="email"
+                required
+                placeholder="bacsi@benhvien.vn"
+                value={authEmail}
+                onChange={(e) => setAuthEmail(e.target.value)}
+                className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm transition-all bg-slate-50 focus:bg-white"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-2">Mật khẩu</label>
+              <input
+                type="password"
+                required
+                placeholder="••••••••"
+                value={authPassword}
+                onChange={(e) => setAuthPassword(e.target.value)}
+                className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm transition-all bg-slate-50 focus:bg-white"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={authLoading}
+              className="w-full py-3 bg-slate-900 border border-transparent text-white font-semibold rounded-xl text-sm transition-all hover:bg-slate-800 flex items-center justify-center gap-2 shadow-md shadow-slate-900/10 hover:shadow-slate-900/20 cursor-pointer disabled:opacity-50"
+            >
+              {authLoading ? (
+                <Loader2 className="animate-spin" size={16} />
+              ) : null}
+              <span>{isRegisterScreen ? 'Tạo tài khoản' : 'Vào hệ thống'}</span>
+            </button>
+          </form>
+
+          <div className="mt-6 flex flex-col items-center gap-2 border-t border-slate-100 pt-6">
+            <p className="text-[11px] text-slate-400 text-center leading-relaxed">
+              Dữ liệu của bạn được đồng bộ đám mây và bảo vệ bằng mật khẩu. Thư mục Google Drive lưu trữ hồ sơ tài liệu pháp lý được kết nối riêng độc lập.
+            </p>
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen bg-slate-50 font-sans text-slate-900 overflow-hidden">
@@ -603,6 +917,64 @@ const DeviceDashboard: React.FC = () => {
             </div>
           </div>
           <div className="flex items-center gap-3">
+            {/* 1. Primary System Account Profile */}
+            <div className="flex items-center gap-2.5 bg-slate-50 border border-slate-200 pl-3 pr-2 py-1.5 rounded-2xl">
+              <div className="w-7 h-7 bg-blue-600 text-white rounded-xl flex items-center justify-center font-bold text-xs uppercase shadow-sm">
+                {appUser?.email?.charAt(0).toUpperCase() || 'U'}
+              </div>
+              <div className="text-left hidden md:block">
+                <div className="text-xs font-bold text-slate-800 line-clamp-1 max-w-[120px] leading-tight">
+                  Quản trị viên
+                </div>
+                <div className="text-[10px] text-slate-400 font-mono line-clamp-1 max-w-[125px] leading-none mt-0.5">
+                  {appUser?.email}
+                </div>
+              </div>
+              <button
+                onClick={handleSignOutSystem}
+                className="p-1.5 text-slate-400 hover:text-red-500 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+                title="Đăng xuất khỏi hệ thống"
+              >
+                <X size={15} />
+              </button>
+            </div>
+
+            {/* 2. Separate Google Drive Document Storage Indicator */}
+            {isDriveConnected ? (
+              <div className="flex items-center gap-2.5 bg-green-50 border border-green-200 pl-3 pr-2 py-1.5 rounded-2xl">
+                <Cloud className="text-green-600 animate-pulse" size={17} />
+                <div className="text-left hidden md:block">
+                  <div className="text-xs font-bold text-green-800 leading-tight">
+                    Đã lưu Drive
+                  </div>
+                  <div className="text-[10px] text-green-600 font-mono line-clamp-1 max-w-[130px] leading-none mt-0.5">
+                    {driveUserEmail}
+                  </div>
+                </div>
+                <button
+                  onClick={handleDisconnectDrive}
+                  disabled={authLoading}
+                  className="p-1.5 text-green-400 hover:text-red-500 rounded-lg hover:bg-green-100 transition-colors cursor-pointer"
+                  title="Ngắt kết nối lưu trữ"
+                >
+                  <X size={15} />
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={handleConnectDrive}
+                disabled={authLoading}
+                className="inline-flex items-center gap-2 px-3.5 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-sm font-semibold rounded-2xl transition-all shadow-xs cursor-pointer disabled:opacity-50"
+              >
+                {authLoading ? (
+                  <Loader2 className="animate-spin text-slate-400" size={15} />
+                ) : (
+                  <Cloud className="text-slate-400" size={15} />
+                )}
+                <span>Liên kết Google Drive</span>
+              </button>
+            )}
+
             <button 
               onClick={handleExportExcel}
               className="flex items-center gap-2 px-4 py-2 border border-slate-200 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors"
@@ -636,7 +1008,7 @@ const DeviceDashboard: React.FC = () => {
                   ringColor="ring-red-100" 
                 />
                 <StatCardV2 
-                  label="Sắp hết hạn (30d)" 
+                  label="Sắp cận hạn" 
                   value={stats.warning} 
                   highlightColor="text-orange-600" 
                   ringColor="ring-orange-100" 
@@ -647,6 +1019,51 @@ const DeviceDashboard: React.FC = () => {
                   highlightColor="text-green-600" 
                 />
               </div>
+
+              {!isDriveConnected && (
+                <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm shrink-0">
+                  <div className="flex items-start sm:items-center gap-3">
+                    <div className="p-2.5 bg-blue-100 text-blue-600 rounded-xl shrink-0">
+                      <Cloud size={20} className="animate-pulse" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-bold text-slate-800 leading-snug">Cơ sở dữ liệu đám mây ngoại tuyến</h4>
+                      <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                        Bạn đang xem dữ liệu ở chế độ lưu trữ mô phỏng ngoại tuyến. Hãy <strong>Đăng nhập tài khoản Google</strong> để kích hoạt đồng bộ dữ liệu với Firestore Cloud bền lâu, lưu minh chứng Drive, và tự động hóa hồ sơ.
+                      </p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={handleConnectDrive}
+                    disabled={authLoading}
+                    className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer shadow-sm shadow-blue-100 shrink-0 inline-flex items-center gap-2 font-sans"
+                  >
+                    {authLoading ? (
+                      <Loader2 size={12} className="animate-spin" />
+                    ) : (
+                      <svg className="w-3.5 h-3.5" viewBox="0 0 24 24">
+                        <path
+                          fill="currentColor"
+                          d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                        />
+                        <path
+                          fill="currentColor"
+                          d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                        />
+                        <path
+                          fill="currentColor"
+                          d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+                        />
+                        <path
+                          fill="currentColor"
+                          d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+                        />
+                      </svg>
+                    )}
+                    <span>Đăng nhập ngay</span>
+                  </button>
+                </div>
+              )}
 
               {/* Filtering & Table Container */}
               <div className="flex-1 bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col min-h-0 overflow-hidden">
@@ -691,6 +1108,8 @@ const DeviceDashboard: React.FC = () => {
                             }}
                             onShowHistory={(d) => setSelectedHistoryDevice(d)}
                             onShowNote={(d) => setSelectedNoteDevice(d)}
+                            warningDaysGCP={warningDaysGCP}
+                            warningDaysGKD={warningDaysGKD}
                           />
                         ))}
                       </AnimatePresence>
@@ -721,7 +1140,7 @@ const DeviceDashboard: React.FC = () => {
               </div>
             </>
           ) : activeTab === 'maintenance' ? (
-            <MaintenanceSchedule devices={devices} />
+            <MaintenanceSchedule devices={devices} warningDaysBD={warningDaysBD} />
           ) : activeTab === 'settings' ? (
             <SettingsPanel 
               isDriveConnected={isDriveConnected}
@@ -731,6 +1150,17 @@ const DeviceDashboard: React.FC = () => {
               setDriveUserEmail={setDriveUserEmail}
               setAuthLoading={setAuthLoading}
               setDriveFolderIds={setDriveFolderIds}
+              onUnauthorizedDomainError={(domain) => {
+                setFailedDomain(domain);
+                setShowAuthDomainError(true);
+              }}
+              askConfirmation={askConfirmation}
+              warningDaysGCP={warningDaysGCP}
+              setWarningDaysGCP={setWarningDaysGCP}
+              warningDaysGKD={warningDaysGKD}
+              setWarningDaysGKD={setWarningDaysGKD}
+              warningDaysBD={warningDaysBD}
+              setWarningDaysBD={setWarningDaysBD}
             />
           ) : (
             <LegalDocumentsPanel 
@@ -742,6 +1172,7 @@ const DeviceDashboard: React.FC = () => {
               driveFolderIds={driveFolderIds}
               setDriveFolderIds={setDriveFolderIds}
               setActiveTab={setActiveTab}
+              askConfirmation={askConfirmation}
               onActionLog={async (deviceId, text, type) => {
                 const newAutoLog: ActivityLog = {
                   id: `doc-log-${Math.random().toString(36).substr(2, 9)}`,
@@ -754,7 +1185,7 @@ const DeviceDashboard: React.FC = () => {
                   notes: type === 'UPLOAD' ? 'Nhật ký hệ thống: Tải hồ sơ lên thành công.' : 'Nhật ký hệ thống: Đã xóa hồ sơ tài liệu khỏi thiết bị.'
                 };
                 setActivityLogs(prev => [newAutoLog, ...prev]);
-                if (isDriveConnected && auth.currentUser) {
+                if (auth.currentUser) {
                   await saveActivityLogToFirestore(auth.currentUser.uid, newAutoLog);
                 }
               }}
@@ -818,17 +1249,23 @@ const DeviceDashboard: React.FC = () => {
             logs={activityLogs.filter(log => log.deviceId === selectedHistoryDevice?.id)}
             onAddLog={async (newLog) => {
               setActivityLogs(prev => [newLog, ...prev]);
-              if (isDriveConnected && auth.currentUser) {
+              if (auth.currentUser) {
                 await saveActivityLogToFirestore(auth.currentUser.uid, newLog);
               }
             }}
             onDeleteLog={async (logId) => {
-              if (confirm('Bạn có chắc muốn xóa bản ghi lịch sử này?')) {
-                setActivityLogs(prev => prev.filter(l => l.id !== logId));
-                if (isDriveConnected && auth.currentUser) {
-                  await deleteActivityLogFromFirestore(auth.currentUser.uid, logId);
-                }
-              }
+              askConfirmation(
+                'Xóa bản ghi nhật ký',
+                'Bạn có chắc chắn muốn xóa bản ghi lịch sử hoạt động này? Hành động này không thể hoàn tác.',
+                async () => {
+                  setActivityLogs(prev => prev.filter(l => l.id !== logId));
+                  if (auth.currentUser) {
+                    await deleteActivityLogFromFirestore(auth.currentUser.uid, logId);
+                  }
+                },
+                'danger',
+                'Xóa bản ghi'
+              );
             }}
           />
         )}
@@ -844,7 +1281,173 @@ const DeviceDashboard: React.FC = () => {
           />
         )}
       </AnimatePresence>
+
+      {/* Firebase Unauthorized Domain Modal Helper */}
+      <UnauthorizedDomainModal 
+        isOpen={showAuthDomainError}
+        onClose={() => setShowAuthDomainError(false)}
+        domain={failedDomain}
+      />
+
+      {/* Custom Confirmation Modal Portal */}
+      <CustomConfirmationModal
+        isOpen={confirmDialog.isOpen}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        confirmText={confirmDialog.confirmText || 'Xác nhận'}
+        cancelText="Hủy bỏ"
+        variant={confirmDialog.variant || 'info'}
+        onConfirm={confirmDialog.onConfirm}
+        onCancel={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
+      />
     </div>
+  );
+};
+
+interface UnauthorizedDomainModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  domain: string;
+}
+
+const UnauthorizedDomainModal: React.FC<UnauthorizedDomainModalProps> = ({ isOpen, onClose, domain }) => {
+  const [copied, setCopied] = useState(false);
+  const targetDomain = domain || (typeof window !== "undefined" ? window.location.hostname : "");
+  
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(targetDomain);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    } catch (err) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    }
+  };
+
+  return (
+    <AnimatePresence>
+      {isOpen && (
+        <div className="fixed inset-0 z-55 z-[9999] flex items-center justify-center p-4">
+          {/* Backdrop */}
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={onClose}
+            className="fixed inset-0 bg-slate-950/45 backdrop-blur-xs"
+          />
+          
+          {/* Modal Content */}
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: 15 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 15 }}
+            transition={{ type: "spring", duration: 0.4 }}
+            className="bg-white rounded-3xl border border-slate-150 shadow-2xl overflow-hidden max-w-lg w-full relative z-10 flex flex-col font-sans"
+          >
+            {/* Header Stripe Accent */}
+            <div className="h-2 bg-gradient-to-r from-red-500 to-amber-500" />
+            
+            <div className="p-7">
+              {/* Absolute Close */}
+              <button 
+                onClick={onClose}
+                className="absolute right-5 top-5 p-1.5 rounded-xl hover:bg-slate-100 transition-colors text-slate-400 hover:text-slate-705 cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+
+              <div className="flex items-start gap-4">
+                <div className="p-3 bg-red-50 rounded-2xl text-red-600 inline-flex shrink-0">
+                  <ShieldCheck className="stroke-[2.5]" size={24} />
+                </div>
+                <div>
+                  <h3 className="text-base font-extrabold text-slate-800 leading-snug">
+                    Lỗi xác thực tên miền Firebase
+                  </h3>
+                  <p className="text-xs text-slate-500 leading-relaxed mt-1">
+                    Trình đăng nhập Google yêu cầu địa chỉ website đang chạy ứng dụng của bạn phải nằm trong danh sách các miền được ủy quyền an toàn trong Firebase Console.
+                  </p>
+                </div>
+              </div>
+
+              {/* Step checklist */}
+              <div className="mt-6 space-y-5 text-xs">
+                <div className="p-4 bg-slate-50 border border-slate-150 rounded-2xl space-y-2">
+                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Tên miền cần Thêm:</div>
+                  <div className="flex gap-2 items-center">
+                    <input 
+                      type="text" 
+                      readOnly 
+                      value={targetDomain}
+                      className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-[11px] font-mono font-semibold text-slate-700 outline-none select-all"
+                    />
+                    <button 
+                      onClick={handleCopy}
+                      className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
+                        copied 
+                          ? "bg-green-600 text-white" 
+                          : "bg-slate-900 hover:bg-slate-800 text-white shadow-xs"
+                      }`}
+                    >
+                      {copied ? "Đã Sao Chép!" : "Sao Chép"}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-slate-400 italic">
+                    *Mẹo: Bạn có thể thêm cả địa chỉ website <strong>Dev</strong> và <strong>Shared</strong> để sử dụng thuận tiện.
+                  </p>
+                </div>
+
+                <div className="space-y-3">
+                  <h4 className="font-bold text-slate-755 uppercase tracking-widest text-[10px]">Các bước thực hiện nhanh:</h4>
+                  
+                  <div className="grid gap-2.5 text-slate-600">
+                    <div className="flex gap-2">
+                      <span className="w-5 h-5 rounded-full bg-slate-100 flex items-center justify-center font-bold text-slate-500 text-[10px] shrink-0">1</span>
+                      <p className="leading-relaxed mt-0.5">
+                        Truy cập <a href="https://console.firebase.google.com/" target="_blank" rel="noreferrer" className="text-blue-600 hover:underline inline-flex items-center gap-0.5 font-semibold">Firebase Console <ExternalLink size={10} /></a> và chọn dự án có mã hiệu: <code className="bg-slate-100 text-red-650 px-1.5 py-0.5 rounded font-bold font-mono">quanlythietbiyte-babd8</code>
+                      </p>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <span className="w-5 h-5 rounded-full bg-slate-100 flex items-center justify-center font-bold text-slate-500 text-[10px] shrink-0">2</span>
+                      <p className="leading-relaxed mt-0.5">
+                        Nhấn chọn <strong>Authentication</strong> (ở menu thanh bên) &rarr; chọn tiếp tab <strong>Settings</strong> ở hàng trên đầu.
+                      </p>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <span className="w-5 h-5 rounded-full bg-slate-100 flex items-center justify-center font-bold text-slate-500 text-[10px] shrink-0">3</span>
+                      <p className="leading-relaxed mt-0.5">
+                        Tại menu dọc bên trái, bấm vào <strong>Authorized domains</strong> (Miền được ủy quyền).
+                      </p>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <span className="w-5 h-5 rounded-full bg-slate-100 flex items-center justify-center font-bold text-slate-500 text-[10px] shrink-0">4</span>
+                      <p className="leading-relaxed mt-0.5">
+                        Ấn nút <strong>Add domain</strong> (Thêm miền) &rarr; dán chính xác tên miền bạn vừa nhấn sao chép ở trên vào, sau đó ấn <strong>Add</strong> để lưu.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Close footer */}
+              <div className="mt-8">
+                <button
+                  onClick={onClose}
+                  className="w-full py-3.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-2xl transition-all cursor-pointer text-center font-sans tracking-wide"
+                >
+                  Đóng Hướng Dẫn
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      )}
+    </AnimatePresence>
   );
 };
 
@@ -1051,10 +1654,12 @@ interface DeviceRowProps {
   onEdit: (device: Device) => void;
   onShowHistory: (device: Device) => void;
   onShowNote: (device: Device) => void;
+  warningDaysGCP?: number;
+  warningDaysGKD?: number;
   key?: any;
 }
 
-const DeviceRowV2 = ({ device, onConfirm, onDelete, onEdit, onShowHistory, onShowNote }: DeviceRowProps) => {
+const DeviceRowV2 = ({ device, onConfirm, onDelete, onEdit, onShowHistory, onShowNote, warningDaysGCP = 30, warningDaysGKD = 30 }: DeviceRowProps) => {
   const [editingField, setEditingField] = useState<'GCP' | 'GKD' | null>(null);
   const [tempDate, setTempDate] = useState('');
   const [showMenu, setShowMenu] = useState(false);
@@ -1062,14 +1667,14 @@ const DeviceRowV2 = ({ device, onConfirm, onDelete, onEdit, onShowHistory, onSho
   const gcpDays = getDaysRemaining(device.expiryGCP);
   const gkdDays = getDaysRemaining(device.expiryGKD);
 
-  const getDayBadge = (days: number | null) => {
+  const getDayBadge = (days: number | null, warningDays: number) => {
     if (days === null) return null;
     if (days < 0) return (
       <div className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] bg-red-100 text-red-700 font-bold uppercase mt-1 tracking-tighter">
         Quá hạn {Math.abs(days)} ngày
       </div>
     );
-    if (days <= 30) return (
+    if (days <= warningDays) return (
       <div className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] bg-orange-100 text-orange-700 font-bold uppercase mt-1 tracking-tighter">
         Còn {days} ngày
       </div>
@@ -1081,10 +1686,10 @@ const DeviceRowV2 = ({ device, onConfirm, onDelete, onEdit, onShowHistory, onSho
     );
   };
 
-  const DateCell = ({ label, date, days, type }: { label: string, date: string, days: number | null, type: 'GCP' | 'GKD' }) => (
+  const DateCell = ({ label, date, days, type, warningDays }: { label: string, date: string, days: number | null, type: 'GCP' | 'GKD', warningDays: number }) => (
     <div className="group/cell relative">
       <div className="flex items-center gap-2">
-        <div className={`text-sm ${getStatusColor(days)}`}>
+        <div className={`text-sm ${getStatusColor(days, warningDays)}`}>
           {formatDisplayDate(date)}
         </div>
         <button 
@@ -1098,7 +1703,7 @@ const DeviceRowV2 = ({ device, onConfirm, onDelete, onEdit, onShowHistory, onSho
           <Pencil size={12} />
         </button>
       </div>
-      {getDayBadge(days)}
+      {getDayBadge(days, warningDays)}
       
       {editingField === type && (
         <div className="absolute top-0 left-0 z-20 bg-white p-2 shadow-xl rounded-lg border border-slate-200 flex flex-col gap-2">
@@ -1163,10 +1768,10 @@ const DeviceRowV2 = ({ device, onConfirm, onDelete, onEdit, onShowHistory, onSho
         <div className="text-[11px] text-slate-400 italic">{device.origin} / {device.yearOfProduction}</div>
       </td>
       <td className="px-6 py-4">
-        <DateCell type="GCP" date={device.expiryGCP} days={gcpDays} label="GCP" />
+        <DateCell type="GCP" date={device.expiryGCP} days={gcpDays} label="GCP" warningDays={warningDaysGCP} />
       </td>
       <td className="px-6 py-4">
-        <DateCell type="GKD" date={device.expiryGKD} days={gkdDays} label="GKD" />
+        <DateCell type="GKD" date={device.expiryGKD} days={gkdDays} label="GKD" warningDays={warningDaysGKD} />
       </td>
       <td className="px-6 py-4">
         <div className="text-sm text-slate-500 italic">Định kỳ {device.maintenancePeriod} tháng</div>
@@ -1176,20 +1781,19 @@ const DeviceRowV2 = ({ device, onConfirm, onDelete, onEdit, onShowHistory, onSho
         <div className="flex items-center justify-end gap-2 relative">
           <div className="relative">
             {(() => {
-              const days = gkdDays !== null ? gkdDays : (gcpDays !== null ? gcpDays : null);
+              const isWarningState = (gkdDays !== null && gkdDays >= 0 && gkdDays <= warningDaysGKD) ||
+                                     (gcpDays !== null && gcpDays >= 0 && gcpDays <= warningDaysGCP);
+              const isExpiredState = (gkdDays !== null && gkdDays < 0) || (gcpDays !== null && gcpDays < 0);
+
               let btnConfig = {
                 label: 'BÌNH THƯỜNG',
-                classes: 'bg-slate-900 hover:bg-slate-800'
+                classes: 'bg-green-600 hover:bg-green-700 shadow-green-100'
               };
 
-              if (days !== null) {
-                if (days < 0) {
-                  btnConfig = { label: 'QUÁ HẠN', classes: 'bg-red-600 hover:bg-red-700 shadow-red-100' };
-                } else if (days <= 30) {
-                  btnConfig = { label: 'CẬN HẠN', classes: 'bg-orange-500 hover:bg-orange-600 shadow-orange-100' };
-                } else {
-                  btnConfig = { label: 'BÌNH THƯỜNG', classes: 'bg-green-600 hover:bg-green-700 shadow-green-100' };
-                }
+              if (isExpiredState) {
+                btnConfig = { label: 'QUÁ HẠN', classes: 'bg-red-600 hover:bg-red-700 shadow-red-100' };
+              } else if (isWarningState) {
+                btnConfig = { label: 'CẬN HẠN', classes: 'bg-orange-500 hover:bg-orange-600 shadow-orange-100' };
               }
 
               return (
@@ -1303,7 +1907,7 @@ const DeviceRowV2 = ({ device, onConfirm, onDelete, onEdit, onShowHistory, onSho
   );
 };
 
-const MaintenanceSchedule = ({ devices }: { devices: Device[] }) => {
+const MaintenanceSchedule = ({ devices, warningDaysBD = 30 }: { devices: Device[], warningDaysBD: number }) => {
   return (
     <div className="flex-1 bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
       <div className="p-6 border-b border-slate-100 bg-slate-50/30">
@@ -1330,7 +1934,7 @@ const MaintenanceSchedule = ({ devices }: { devices: Device[] }) => {
                 </div>
               </div>
               <div className="text-right">
-                <div className={`text-sm font-bold ${daysToMaintenance < 0 ? 'text-red-600' : daysToMaintenance < 30 ? 'text-orange-500' : 'text-slate-600'}`}>
+                <div className={`text-sm font-bold ${daysToMaintenance < 0 ? 'text-red-600' : daysToMaintenance < warningDaysBD ? 'text-orange-500' : 'text-slate-600'}`}>
                   Kiến nghị: {format(nextDate, 'dd/MM/yyyy')}
                 </div>
                 <div className="text-[10px] text-slate-400 italic">
@@ -1353,6 +1957,14 @@ interface SettingsPanelProps {
   setDriveUserEmail: (email: string | null) => void;
   setAuthLoading: (loading: boolean) => void;
   setDriveFolderIds: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  onUnauthorizedDomainError?: (domain: string) => void;
+  askConfirmation?: (title: string, message: string, onConfirm: () => void, variant?: 'danger' | 'warning' | 'info', confirmText?: string) => void;
+  warningDaysGCP: number;
+  setWarningDaysGCP: (val: number) => void;
+  warningDaysGKD: number;
+  setWarningDaysGKD: (val: number) => void;
+  warningDaysBD: number;
+  setWarningDaysBD: (val: number) => void;
 }
 
 const SettingsPanel: React.FC<SettingsPanelProps> = ({
@@ -1362,7 +1974,15 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   setIsDriveConnected,
   setDriveUserEmail,
   setAuthLoading,
-  setDriveFolderIds
+  setDriveFolderIds,
+  onUnauthorizedDomainError,
+  askConfirmation,
+  warningDaysGCP,
+  setWarningDaysGCP,
+  warningDaysGKD,
+  setWarningDaysGKD,
+  warningDaysBD,
+  setWarningDaysBD
 }) => {
   const [email, setEmail] = useState('');
   const [isSubscribed, setIsSubscribed] = useState(false);
@@ -1392,19 +2012,26 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
       const res = await googleSignIn();
       if (res) {
         setIsDriveConnected(true);
-        setDriveUserEmail(res.user.email || 'Người dùng Google');
+        setDriveUserEmail(res.email || 'Người dùng Google');
         setDriveFolderIds({});
         alert('Kết nối Google Drive thành công!');
       }
     } catch (err: any) {
-      alert(`Kết nối Google Drive thất bại: ${err.message || err}`);
+      console.error('Lỗi khi đăng nhập Google (Settings):', err);
+      if (err.message && (err.message.includes("auth/unauthorized-domain") || err.code === "auth/unauthorized-domain" || String(err).includes("unauthorized-domain"))) {
+        if (onUnauthorizedDomainError) {
+          onUnauthorizedDomainError(window.location.hostname);
+        }
+      } else {
+        alert(`Kết nối Google Drive thất bại: ${err.message || err}`);
+      }
     } finally {
       setAuthLoading(false);
     }
   };
 
   const handleDisconnectDrive = async () => {
-    if (confirm('Bạn có chắc chắn muốn ngắt kết nối tài khoản Google Drive? Hệ thống sẽ quay trở lại chế độ lưu trữ ngoại tuyến.')) {
+    const disconnectAction = async () => {
       setAuthLoading(true);
       try {
         await logout();
@@ -1414,6 +2041,20 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
         alert(`Lỗi khi ngắt kết nối: ${err.message || err}`);
       } finally {
         setAuthLoading(false);
+      }
+    };
+
+    if (askConfirmation) {
+      askConfirmation(
+        'Ngắt kết nối Google Drive',
+        'Bạn có chắc chắn muốn ngắt kết nối tài khoản Google Drive? Hệ thống sẽ quay trở lại chế độ lưu trữ ngoại tuyến.',
+        disconnectAction,
+        'warning',
+        'Ngắt kết nối'
+      );
+    } else {
+      if (confirm('Bạn có chắc chắn muốn ngắt kết nối tài khoản Google Drive? Hệ thống sẽ quay trở lại chế độ lưu trữ ngoại tuyến.')) {
+        await disconnectAction();
       }
     }
   };
@@ -1509,6 +2150,97 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
               <span className="text-xs font-bold uppercase tracking-widest">
                 Thông báo Email: {isSubscribed ? `Đang hoạt động (${email})` : 'Chưa kích hoạt'}
               </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* SECTION 1.5: Threshold warning lead times settings */}
+      <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+        <div className="p-8 border-b border-slate-100 bg-slate-50/50">
+          <div className="flex items-center gap-4 mb-2">
+            <div className="p-3 bg-orange-500 text-white rounded-2xl shadow-lg shadow-orange-100">
+              <Clock size={24} />
+            </div>
+            <div>
+              <h2 className="text-2xl font-bold text-slate-800 tracking-tight font-sans">Thời gian cảnh báo trước</h2>
+              <p className="text-sm text-slate-500 font-sans">Cài đặt số ngày báo trước khi giấy phép, kiểm định hoặc bảo trì hết hạn</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="p-8 space-y-6">
+          <p className="text-xs text-slate-500 italic leading-relaxed font-sans">
+            Hệ thống sẽ chuyển trạng thái các thiết bị sang màu cam (Cận hạn) và gửi cảnh báo trước khi đến ngày hết hạn thực tế theo cấu hình dưới đây.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block font-sans">
+                Giấy phép (GCP)
+              </label>
+              <div className="relative flex items-center">
+                <input 
+                  type="number"
+                  min="1"
+                  max="365"
+                  className="w-full rounded-2xl bg-slate-50 border border-slate-200 pl-4 pr-12 py-3 text-sm font-semibold outline-none focus:ring-2 focus:ring-blue-500 transition-all font-mono text-slate-700"
+                  value={warningDaysGCP}
+                  onChange={(e) => {
+                    const parsed = parseInt(e.target.value);
+                    if (!isNaN(parsed) && parsed > 0) setWarningDaysGCP(parsed);
+                  }}
+                />
+                <span className="absolute right-4 text-xs font-bold text-slate-400">ngày</span>
+              </div>
+              <p className="text-[11px] text-slate-400 leading-normal">
+                Thời gian chuẩn bị gia hạn Giấy phép sử dụng.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block font-sans">
+                Kiểm định (GKĐ)
+              </label>
+              <div className="relative flex items-center">
+                <input 
+                  type="number"
+                  min="1"
+                  max="365"
+                  className="w-full rounded-2xl bg-slate-50 border border-slate-200 pl-4 pr-12 py-3 text-sm font-semibold outline-none focus:ring-2 focus:ring-blue-500 transition-all font-mono text-slate-700"
+                  value={warningDaysGKD}
+                  onChange={(e) => {
+                    const parsed = parseInt(e.target.value);
+                    if (!isNaN(parsed) && parsed > 0) setWarningDaysGKD(parsed);
+                  }}
+                />
+                <span className="absolute right-4 text-xs font-bold text-slate-400">ngày</span>
+              </div>
+              <p className="text-[11px] text-slate-400 leading-normal">
+                Thời gian chuẩn bị kiểm định an toàn thiết bị.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block font-sans">
+                Bảo dưỡng (BD)
+              </label>
+              <div className="relative flex items-center">
+                <input 
+                  type="number"
+                  min="1"
+                  max="365"
+                  className="w-full rounded-2xl bg-slate-50 border border-slate-200 pl-4 pr-12 py-3 text-sm font-semibold outline-none focus:ring-2 focus:ring-blue-500 transition-all font-mono text-slate-700"
+                  value={warningDaysBD}
+                  onChange={(e) => {
+                    const parsed = parseInt(e.target.value);
+                    if (!isNaN(parsed) && parsed > 0) setWarningDaysBD(parsed);
+                  }}
+                />
+                <span className="absolute right-4 text-xs font-bold text-slate-400">ngày</span>
+              </div>
+              <p className="text-[11px] text-slate-400 leading-normal">
+                Thời gian lên kế hoạch liên hệ kĩ sư bảo dưỡng định kì.
+              </p>
             </div>
           </div>
         </div>
@@ -1654,7 +2386,8 @@ const LegalDocumentsPanel = ({
   driveFolderIds,
   setDriveFolderIds,
   setActiveTab,
-  onActionLog 
+  onActionLog,
+  askConfirmation
 }: { 
   devices: Device[]; 
   isDriveConnected: boolean;
@@ -1665,6 +2398,7 @@ const LegalDocumentsPanel = ({
   setDriveFolderIds: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   setActiveTab: (tab: 'inventory' | 'maintenance' | 'legal' | 'settings') => void;
   onActionLog?: (deviceId: string, text: string, type: 'UPLOAD' | 'DELETE') => void; 
+  askConfirmation?: (title: string, message: string, onConfirm: () => void, variant?: 'danger' | 'warning' | 'info', confirmText?: string) => void;
 }) => {
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
@@ -1769,29 +2503,42 @@ const LegalDocumentsPanel = ({
     if (!selectedDeviceId) return;
 
     if (isDriveConnected) {
-      // Mandatory validation check
-      const confirmed = window.confirm(`CẢNH BÁO: Bạn có chắc chắn muốn xóa vĩnh viễn tài liệu này khỏi Google Drive của bạn? Hành động này không thể hoàn tác.`);
-      if (!confirmed) return;
+      const deleteAction = async () => {
+        setLoadingDrive(true);
+        try {
+          const fileTarget = driveFiles[selectedDeviceId]?.find(d => d.id === docId);
+          const fileName = fileTarget?.name || 'Tài liệu';
 
-      setLoadingDrive(true);
-      try {
-        const fileTarget = driveFiles[selectedDeviceId]?.find(d => d.id === docId);
-        const fileName = fileTarget?.name || 'Tài liệu';
+          await deleteDriveFile(docId);
+          setDriveFiles(prev => ({
+            ...prev,
+            [selectedDeviceId]: (prev[selectedDeviceId] || []).filter(d => d.id !== docId)
+          }));
 
-        await deleteDriveFile(docId);
-        setDriveFiles(prev => ({
-          ...prev,
-          [selectedDeviceId]: (prev[selectedDeviceId] || []).filter(d => d.id !== docId)
-        }));
-
-        setConfirmDeleteId(null);
-        if (onActionLog) {
-          onActionLog(selectedDeviceId, `Xóa tài liệu trên Google Drive: "${fileName}"`, 'DELETE');
+          setConfirmDeleteId(null);
+          if (onActionLog) {
+            onActionLog(selectedDeviceId, `Xóa tài liệu trên Google Drive: "${fileName}"`, 'DELETE');
+          }
+        } catch (err: any) {
+          alert(`Xóa tệp thất bại: ${err.message || err}`);
+        } finally {
+          setLoadingDrive(false);
         }
-      } catch (err: any) {
-        alert(`Xóa tệp thất bại: ${err.message || err}`);
-      } finally {
-        setLoadingDrive(false);
+      };
+
+      if (askConfirmation) {
+        askConfirmation(
+          'Xóa tài liệu',
+          'CẢNH BÁO: Bạn có chắc chắn muốn xóa vĩnh viễn tài liệu này khỏi Google Drive của bạn? Hành động này không thể hoàn tác.',
+          deleteAction,
+          'danger',
+          'Xóa vĩnh viễn'
+        );
+      } else {
+        const confirmed = window.confirm(`CẢNH BÁO: Bạn có chắc chắn muốn xóa vĩnh viễn tài liệu này khỏi Google Drive của bạn? Hành động này không thể hoàn tác.`);
+        if (confirmed) {
+          await deleteAction();
+        }
       }
     } else {
       // Local simulated delete
@@ -2332,6 +3079,20 @@ const NoteModal = ({
   const [currentNoteId, setCurrentNoteId] = useState<string | null>(null);
   const [noteContent, setNoteContent] = useState('');
   const [noteDate, setNoteDate] = useState(new Date().toISOString().split('T')[0]);
+  const [localConfirm, setLocalConfirm] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    variant: 'danger' | 'warning' | 'info';
+    confirmText?: string;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+    variant: 'info'
+  });
 
   React.useEffect(() => {
     if (device) {
@@ -2393,19 +3154,35 @@ const NoteModal = ({
   };
 
   const handleDeleteNote = (id: string) => {
-    if (confirm('Bạn có chắc chắn muốn xóa ghi chú này?')) {
-      setLocalNotesList(prev => prev.filter(n => n.id !== id));
-      if (currentNoteId === id) {
-        handleCancelEdit();
+    setLocalConfirm({
+      isOpen: true,
+      title: 'Xóa ghi chú',
+      message: 'Bạn có chắc chắn muốn xóa ghi chú này?',
+      variant: 'danger',
+      confirmText: 'Xóa ghi chú',
+      onConfirm: () => {
+        setLocalNotesList(prev => prev.filter(n => n.id !== id));
+        if (currentNoteId === id) {
+          handleCancelEdit();
+        }
+        setLocalConfirm(prev => ({ ...prev, isOpen: false }));
       }
-    }
+    });
   };
 
   const handleClearAll = () => {
-    if (confirm('CẢNH BÁO: Bạn có chắc chắn muốn xóa toàn bộ tất cả bản ghi chú của thiết bị này? Hành động này không thể hoàn tác.')) {
-      setLocalNotesList([]);
-      handleCancelEdit();
-    }
+    setLocalConfirm({
+      isOpen: true,
+      title: 'Xóa toàn bộ ghi chú',
+      message: 'CẢNH BÁO: Bạn có chắc chắn muốn xóa toàn bộ tất cả bản ghi chú của thiết bị này? Hành động này không thể hoàn tác.',
+      variant: 'danger',
+      confirmText: 'Xóa tất cả',
+      onConfirm: () => {
+        setLocalNotesList([]);
+        handleCancelEdit();
+        setLocalConfirm(prev => ({ ...prev, isOpen: false }));
+      }
+    });
   };
 
   const handleSaveAll = () => {
@@ -2678,8 +3455,117 @@ const NoteModal = ({
             </button>
           </div>
         </div>
+
+        {/* Local Custom Confirmation Dialog inside NoteModal */}
+        <CustomConfirmationModal
+          isOpen={localConfirm.isOpen}
+          title={localConfirm.title}
+          message={localConfirm.message}
+          confirmText={localConfirm.confirmText || 'Xác nhận'}
+          cancelText="Hủy bỏ"
+          variant={localConfirm.variant || 'info'}
+          onConfirm={localConfirm.onConfirm}
+          onCancel={() => setLocalConfirm(prev => ({ ...prev, isOpen: false }))}
+        />
       </motion.div>
     </div>
+  );
+};
+
+interface CustomConfirmationModalProps {
+  isOpen: boolean;
+  title: string;
+  message: string;
+  confirmText: string;
+  cancelText: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+  variant: 'danger' | 'warning' | 'info';
+}
+
+const CustomConfirmationModal: React.FC<CustomConfirmationModalProps> = ({
+  isOpen,
+  title,
+  message,
+  confirmText,
+  cancelText,
+  onConfirm,
+  onCancel,
+  variant
+}) => {
+  if (!isOpen) return null;
+
+  const btnColors = {
+    danger: 'bg-red-650 hover:bg-red-700 text-white shadow-red-100',
+    warning: 'bg-amber-600 hover:bg-amber-700 text-white shadow-amber-100',
+    info: 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-100'
+  };
+
+  const iconColors = {
+    danger: 'bg-red-50 text-red-600 border border-red-100',
+    warning: 'bg-amber-50 text-amber-600 border border-amber-100',
+    info: 'bg-blue-50 text-blue-600 border border-blue-100'
+  };
+
+  return (
+    <AnimatePresence>
+      <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4">
+        {/* Backdrop overlay */}
+        <motion.div 
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          onClick={onCancel}
+          className="fixed inset-0 bg-slate-950/45 backdrop-blur-xs"
+        />
+
+        {/* Modal content body */}
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95, y: 15 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          exit={{ opacity: 0, scale: 0.95, y: 15 }}
+          transition={{ type: "spring", duration: 0.35 }}
+          className="bg-white rounded-3xl border border-slate-150 shadow-2xl overflow-hidden max-w-md w-full relative z-10 flex flex-col font-sans"
+        >
+          {/* Header Strip */}
+          <div className={`h-1.5 ${variant === 'danger' ? 'bg-red-500' : variant === 'warning' ? 'bg-amber-500' : 'bg-blue-500'}`} />
+
+          <div className="p-6">
+            <div className="flex items-start gap-4">
+              <div className={`p-3 rounded-2xl shrink-0 ${iconColors[variant]}`}>
+                {variant === 'danger' ? <Trash2 size={22} /> : <AlertCircle size={22} />}
+              </div>
+              <div className="flex-1">
+                <h3 className="text-base font-extrabold text-slate-800 leading-snug">
+                  {title}
+                </h3>
+                <p className="text-xs text-slate-500 leading-relaxed mt-2 text-slate-510 font-sans font-medium">
+                  {message}
+                </p>
+              </div>
+            </div>
+
+            {/* Action buttons footer */}
+            <div className="mt-8 flex gap-3 justify-end">
+              <button
+                type="button"
+                onClick={onCancel}
+                className="px-4.5 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer"
+              >
+                {cancelText}
+              </button>
+              <button
+                type="button"
+                onClick={onConfirm}
+                className={`px-5 py-2.5 rounded-xl text-xs font-extrabold shadow-sm transition-colors cursor-pointer ${btnColors[variant]}`}
+              >
+                {confirmText}
+              </button>
+            </div>
+          </div>
+        </motion.div>
+      </div>
+    </AnimatePresence>
   );
 };
 

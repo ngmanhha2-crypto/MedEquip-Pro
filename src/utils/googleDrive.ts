@@ -6,6 +6,11 @@ import firebaseConfig from '../../firebase-applet-config.json';
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 
+// Secondary Firebase App and Auth specifically for Google Drive integration
+// to prevent signing out or switching the main email/password user
+const driveApp = initializeApp(firebaseConfig, 'GoogleDriveApp');
+export const driveAuth = getAuth(driveApp);
+
 const provider = new GoogleAuthProvider();
 // Request Google Drive app folder access
 provider.addScope('https://www.googleapis.com/auth/drive.file');
@@ -21,10 +26,12 @@ export const initAuth = (
   onAuthSuccess?: (user: User, token: string) => void,
   onAuthFailure?: () => void
 ) => {
-  return onAuthStateChanged(auth, async (user: User | null) => {
+  return onAuthStateChanged(driveAuth, async (user: User | null) => {
     if (user) {
-      if (cachedAccessToken) {
-        if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
+      const token = cachedAccessToken || localStorage.getItem('medequip_google_access_token');
+      if (token) {
+        cachedAccessToken = token;
+        if (onAuthSuccess) onAuthSuccess(user, token);
       } else {
         if (onAuthFailure) onAuthFailure();
       }
@@ -35,17 +42,21 @@ export const initAuth = (
   });
 };
 
-// Sign in via Firebase Auth popup
-export const googleSignIn = async (): Promise<{ user: User; accessToken: string } | null> => {
+// Sign in via Firebase Auth popup specifically for Google Drive
+export const googleSignIn = async (): Promise<{ email: string; accessToken: string } | null> => {
   try {
     isSigningIn = true;
-    const result = await signInWithPopup(auth, provider);
+    const result = await signInWithPopup(driveAuth, provider);
     const credential = GoogleAuthProvider.credentialFromResult(result);
     if (!credential?.accessToken) {
       throw new Error('Failed to retrieve Google Access Token.');
     }
     cachedAccessToken = credential.accessToken;
-    return { user: result.user, accessToken: cachedAccessToken };
+    const email = result.user.email || 'Người dùng Google';
+    localStorage.setItem('medequip_google_access_token', cachedAccessToken);
+    localStorage.setItem('medequip_google_email', email);
+    localStorage.setItem('medequip_google_connected', 'true');
+    return { email, accessToken: cachedAccessToken };
   } catch (error: any) {
     console.error('Lỗi khi đăng nhập Google:', error);
     throw error;
@@ -54,15 +65,19 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
   }
 };
 
-// Sign out
+// Sign out / Disconnect Google Drive
 export const logout = async () => {
-  await signOut(auth);
+  await signOut(driveAuth);
   cachedAccessToken = null;
+  localStorage.removeItem('medequip_google_access_token');
+  localStorage.removeItem('medequip_google_email');
+  localStorage.removeItem('medequip_google_connected');
 };
 
-// Retrieve cached access token in memory
+// Retrieve cached access token in memory or localStorage
 export const getAccessToken = async (): Promise<string | null> => {
-  return cachedAccessToken;
+  if (cachedAccessToken) return cachedAccessToken;
+  return localStorage.getItem('medequip_google_access_token');
 };
 
 // Google Drive API Interfaces & Helpers
