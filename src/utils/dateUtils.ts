@@ -29,3 +29,12 @@ export const checkReminders = (days: number | null, warningDays: number = 30) =>
   }
   return null;
 };
+
+export const calculateExpiryFromIssue = (issueDateStr: string, periodMonths: number): string => {
+  if (!issueDateStr || !periodMonths || isNaN(periodMonths)) return '';
+  const issueDate = parseISO(issueDateStr);
+  if (!isValid(issueDate)) return '';
+  const expiryDate = addMonths(issueDate, Number(periodMonths));
+  return format(expiryDate, 'yyyy-MM-dd');
+};
+

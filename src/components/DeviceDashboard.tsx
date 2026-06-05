@@ -27,11 +27,14 @@ import {
   ExternalLink,
   Lock,
   Cloud,
-  Loader2
+  Loader2,
+  Send,
+  RefreshCw,
+  HelpCircle
 } from 'lucide-react';
 import { MOCK_DEVICES } from '../mockData';
 import { Device, DeviceNote, ActivityLog } from '../types';
-import { getDaysRemaining, getStatusColor, formatDisplayDate, checkReminders } from '../utils/dateUtils';
+import { getDaysRemaining, getStatusColor, formatDisplayDate, checkReminders, calculateExpiryFromIssue } from '../utils/dateUtils';
 import {
   googleSignIn,
   logout,
@@ -98,6 +101,29 @@ const DeviceDashboard: React.FC = () => {
     return localStorage.getItem('medequip_google_email');
   });
   const [authLoading, setAuthLoading] = useState(false);
+
+  // Telegram Integration States
+  const [telegramBotToken, setTelegramBotToken] = useState<string>(() => {
+    return localStorage.getItem('medequip_telegram_bot_token') || '';
+  });
+  const [telegramChatId, setTelegramChatId] = useState<string>(() => {
+    return localStorage.getItem('medequip_telegram_chat_id') || '';
+  });
+  const [telegramEnabled, setTelegramEnabled] = useState<boolean>(() => {
+    return localStorage.getItem('medequip_telegram_enabled') === 'true';
+  });
+
+  React.useEffect(() => {
+    localStorage.setItem('medequip_telegram_bot_token', telegramBotToken);
+  }, [telegramBotToken]);
+
+  React.useEffect(() => {
+    localStorage.setItem('medequip_telegram_chat_id', telegramChatId);
+  }, [telegramChatId]);
+
+  React.useEffect(() => {
+    localStorage.setItem('medequip_telegram_enabled', telegramEnabled.toString());
+  }, [telegramEnabled]);
   
   // Primary Email/Password Auth States
   const [appUser, setAppUser] = useState<FirebaseUser | null>(null);
@@ -532,7 +558,13 @@ const DeviceDashboard: React.FC = () => {
     XLSX.writeFile(wb, "Danh_muc_thiet_bi_yte.xlsx");
   };
 
-  const handleConfirmDone = async (id: string, type: 'GCP' | 'GKD' | 'BD', manualDate?: string) => {
+  const handleConfirmDone = async (
+    id: string, 
+    type: 'GCP' | 'GKD' | 'BD', 
+    manualDate?: string,
+    issueDate?: string,
+    period?: number
+  ) => {
     let logDescription = '';
     let category = '';
     const targetDeviceName = devices.find(d => d.id === id)?.name || 'Thiết bị';
@@ -551,8 +583,22 @@ const DeviceDashboard: React.FC = () => {
     setDevices(prev => prev.map(d => {
       if (d.id === id) {
         const targetDate = manualDate || new Date().toISOString().split('T')[0];
-        if (type === 'GKD') return { ...d, expiryGKD: targetDate }; 
-        if (type === 'GCP') return { ...d, expiryGCP: targetDate };
+        if (type === 'GKD') {
+          return { 
+            ...d, 
+            expiryGKD: targetDate,
+            gkdIssueDate: issueDate || d.gkdIssueDate,
+            gkdPeriod: period !== undefined ? period : d.gkdPeriod
+          }; 
+        }
+        if (type === 'GCP') {
+          return { 
+            ...d, 
+            expiryGCP: targetDate,
+            gcpIssueDate: issueDate || d.gcpIssueDate,
+            gcpPeriod: period !== undefined ? period : d.gcpPeriod
+          };
+        }
         if (type === 'BD') return { ...d, lastMaintenance: targetDate };
       }
       return d;
@@ -562,10 +608,24 @@ const DeviceDashboard: React.FC = () => {
     if (targetDevice && auth.currentUser) {
       const targetDate = manualDate || new Date().toISOString().split('T')[0];
       const updatedD = { ...targetDevice };
-      if (type === 'GKD') updatedD.expiryGKD = targetDate;
-      if (type === 'GCP') updatedD.expiryGCP = targetDate;
+      if (type === 'GKD') {
+        updatedD.expiryGKD = targetDate;
+        if (issueDate) updatedD.gkdIssueDate = issueDate;
+        if (period !== undefined) updatedD.gkdPeriod = period;
+      }
+      if (type === 'GCP') {
+        updatedD.expiryGCP = targetDate;
+        if (issueDate) updatedD.gcpIssueDate = issueDate;
+        if (period !== undefined) updatedD.gcpPeriod = period;
+      }
       if (type === 'BD') updatedD.lastMaintenance = targetDate;
       await updateDeviceInFirestore(auth.currentUser.uid, updatedD);
+    }
+
+    // Auto-notify on Telegram
+    if (targetDevice) {
+      const extraNotes = `Hạn mới: ${formatDisplayDate(manualDate || new Date().toISOString().split('T')[0])}${issueDate ? ` | Ngày cấp/kiểm định: ${formatDisplayDate(issueDate)}` : ''}${period ? ` | Hiệu lực: ${period} tháng` : ''}`;
+      sendTelegramDeviceActivity(logDescription, targetDevice, extraNotes);
     }
 
     // Auto-append to activityLogs
@@ -645,11 +705,17 @@ const DeviceDashboard: React.FC = () => {
 
   const handleSaveDevice = async (deviceData: Partial<Device>) => {
     const todayStr = new Date().toISOString().split('T')[0];
-    if (editingDevice) {
-      const notesChanged = deviceData.notes !== editingDevice.notes;
-      const updatedNoteDate = notesChanged ? (deviceData.notes ? todayStr : undefined) : editingDevice.noteDate;
+    const targetEditDevice = editingDevice; // capture current state
+    
+    // Close the popup and reset editing status instantly
+    setIsModalOpen(false);
+    setEditingDevice(null);
+
+    if (targetEditDevice) {
+      const notesChanged = deviceData.notes !== targetEditDevice.notes;
+      const updatedNoteDate = notesChanged ? (deviceData.notes ? todayStr : undefined) : targetEditDevice.noteDate;
       
-      let updatedNotesList = editingDevice.notesList || [];
+      let updatedNotesList = targetEditDevice.notesList || [];
       if (notesChanged) {
         if (deviceData.notes) {
           if (updatedNotesList.length === 0) {
@@ -672,26 +738,29 @@ const DeviceDashboard: React.FC = () => {
         }
       }
 
-      const updatedDevice = { ...editingDevice, ...deviceData, noteDate: updatedNoteDate, notesList: updatedNotesList } as Device;
-      setDevices(prev => prev.map(d => d.id === editingDevice.id ? updatedDevice : d));
+      const updatedDevice = { ...targetEditDevice, ...deviceData, noteDate: updatedNoteDate, notesList: updatedNotesList } as Device;
+      setDevices(prev => prev.map(d => d.id === targetEditDevice.id ? updatedDevice : d));
       
       if (auth.currentUser) {
-        await updateDeviceInFirestore(auth.currentUser.uid, updatedDevice);
+        updateDeviceInFirestore(auth.currentUser.uid, updatedDevice).catch(console.error);
       }
       
+      // Auto-notify on Telegram
+      sendTelegramDeviceActivity(`Chỉnh sửa hồ sơ thiết bị`, updatedDevice, `Chỉnh sửa bởi Người dùng`);
+
       const newAutoLog: ActivityLog = {
         id: `auto-${Math.random().toString(36).substr(2, 9)}`,
-        deviceId: editingDevice.id,
+        deviceId: targetEditDevice.id,
         date: todayStr,
         user: 'Người dùng',
         type: 'EDIT',
         categoryLabel: 'Cập nhật',
-        description: `Chỉnh sửa thông tin hồ sơ thiết bị "${deviceData.name || editingDevice.name}".`,
-        notes: `Năm sản xuất: ${deviceData.yearOfProduction || editingDevice.yearOfProduction}, Chu kỳ bảo trì: ${deviceData.maintenancePeriod || editingDevice.maintenancePeriod} tháng.`
+        description: `Chỉnh sửa thông tin hồ sơ thiết bị "${deviceData.name || targetEditDevice.name}".`,
+        notes: `Năm sản xuất: ${deviceData.yearOfProduction || targetEditDevice.yearOfProduction}, Chu kỳ bảo trì: ${deviceData.maintenancePeriod || targetEditDevice.maintenancePeriod} tháng.`
       };
       setActivityLogs(prev => [newAutoLog, ...prev]);
       if (auth.currentUser) {
-        await saveActivityLogToFirestore(auth.currentUser.uid, newAutoLog);
+        saveActivityLogToFirestore(auth.currentUser.uid, newAutoLog).catch(console.error);
       }
     } else {
       const generatedId = Math.random().toString(36).substr(2, 9);
@@ -710,8 +779,11 @@ const DeviceDashboard: React.FC = () => {
       setDevices(prev => [newDevice, ...prev]);
 
       if (auth.currentUser) {
-        await saveDeviceToFirestore(auth.currentUser.uid, newDevice);
+        saveDeviceToFirestore(auth.currentUser.uid, newDevice).catch(console.error);
       }
+
+      // Auto-notify on Telegram
+      sendTelegramDeviceActivity(`Khởi tạo thiết bị mới`, newDevice, `Khởi tạo bởi Người dùng`);
 
       const newAutoLog: ActivityLog = {
         id: `auto-${Math.random().toString(36).substr(2, 9)}`,
@@ -725,11 +797,151 @@ const DeviceDashboard: React.FC = () => {
       };
       setActivityLogs(prev => [newAutoLog, ...prev]);
       if (auth.currentUser) {
-        await saveActivityLogToFirestore(auth.currentUser.uid, newAutoLog);
+        saveActivityLogToFirestore(auth.currentUser.uid, newAutoLog).catch(console.error);
       }
     }
-    setIsModalOpen(false);
-    setEditingDevice(null);
+  };
+
+  const sendTelegramDeviceActivity = async (actionText: string, device: Device, extraNotes?: string) => {
+    if (!telegramEnabled || !telegramBotToken || !telegramChatId) return;
+    
+    let msg = `🔔 <b>THÔNG BÁO HOẠT ĐỘNG THIẾT BỊ Y TẾ</b>\n\n`;
+    msg += `<b>Hành động:</b> ${actionText}\n`;
+    msg += `<b>Thiết bị:</b> <code>${device.name}</code>\n`;
+    if (device.model) msg += `<b>Model:</b> ${device.model}\n`;
+    if (device.serialNumber) msg += `<b>S/N:</b> <code>${device.serialNumber}</code>\n`;
+    if (device.origin) msg += `<b>Xuất xứ:</b> ${device.origin}\n`;
+    if (device.expiryGCP) msg += `<b>Hạn Giấy phép (GCP):</b> <code>${formatDisplayDate(device.expiryGCP)}</code>\n`;
+    if (device.expiryGKD) msg += `<b>Hạn Kiểm định (GKĐ):</b> <code>${formatDisplayDate(device.expiryGKD)}</code>\n`;
+    if (extraNotes) msg += `\n📝 <b>Ghi chú:</b> <i>${extraNotes}</i>`;
+    msg += `\n\n🕒 Thời gian: ${new Date().toLocaleString('vi-VN')}`;
+
+    try {
+      const url = `https://api.telegram.org/bot${telegramBotToken}/sendMessage`;
+      await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          chat_id: telegramChatId,
+          text: msg,
+          parse_mode: 'HTML',
+        }),
+      });
+    } catch (e) {
+      console.error('Lỗi gửi Telegram tự động:', e);
+    }
+  };
+
+  const handleSendTelegramTestMessage = async (message: string, inputToken?: string, inputChatId?: string): Promise<boolean> => {
+    const tokenToUse = inputToken || telegramBotToken;
+    const chatIdToUse = inputChatId || telegramChatId;
+    if (!tokenToUse || !chatIdToUse) {
+      alert('Vui lòng cấu hình chi tiết Token và Chat ID trước.');
+      return false;
+    }
+    try {
+      const url = `https://api.telegram.org/bot${tokenToUse}/sendMessage`;
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          chat_id: chatIdToUse,
+          text: message || '🔔 <b>Hệ thống quản lý đo lường thiết bị</b>\n\nTin nhắn kiểm tra kết nối Telegram đã được gửi thành công! 🎉',
+          parse_mode: 'HTML',
+        }),
+      });
+      if (response.ok) {
+        return true;
+      } else {
+        const errData = await response.json().catch(() => ({}));
+        let errMsg = errData.description || 'API Telegram phản hồi lỗi.';
+        if (errMsg.includes('chat not found')) {
+          errMsg = 'Không tìm thấy Chat ID này (chat not found).\n\nCách khắc phục:\n1. Nếu gửi vào NHÓM/KÊNH: Hãy chắc chắn bạn đã THÊM BOT của bạn vào nhóm đó.\n2. Nếu gửi CÁ NHÂN: Hãy tìm tên bot trên Telegram của bạn, bấm nút "BẮT ĐẦU" (START) để cho phép bot gửi tin nhắn.\n3. Hãy kiểm tra lại Chat ID (Ví dụ: Chat ID nhóm thường bắt đầu bằng dấu trừ -100...)';
+        } else if (errMsg.includes('bot was blocked by the user')) {
+          errMsg = 'Bot đã bị bạn chặn trên Telegram (bot was blocked by the user).\nVui lòng Unblock (bỏ chặn) Bot rồi nhấn thử lại!';
+        } else if (errMsg.includes('is not a member of the supergroup')) {
+          errMsg = 'Bot chưa phải là thành viên của Nhóm này.\nHãy thêm Bot của bạn vào nhóm Telegram trước rồi nhấn thử lại.';
+        }
+        throw new Error(errMsg);
+      }
+    } catch (error: any) {
+      console.error('Lỗi khi gửi Telegram:', error);
+      alert(`Gửi tin nhắn thử thất bại: ${error.message || error}`);
+      return false;
+    }
+  };
+
+  const handleSendTelegramSummaryReport = async () => {
+    if (!telegramBotToken || !telegramChatId) {
+      alert('Vui lòng cấu hình đầy đủ Bot Token và Chat ID trước.');
+      return;
+    }
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    const expiredList = devices.filter(d => {
+      const gkd = getDaysRemaining(d.expiryGKD);
+      const gcp = getDaysRemaining(d.expiryGCP);
+      return (gkd !== null && gkd < 0) || (gcp !== null && gcp < 0);
+    });
+
+    const warningList = devices.filter(d => {
+      const gkd = getDaysRemaining(d.expiryGKD);
+      const gcp = getDaysRemaining(d.expiryGCP);
+      return (gkd !== null && gkd >= 0 && gkd <= warningDaysGKD) || (gcp !== null && gcp >= 0 && gcp <= warningDaysGCP);
+    });
+
+    let msg = `📊 <b>BÁO CÁO TRẠNG THÁI THIẾT BỊ ĐỊNH KỲ</b>\n`;
+    msg += `<i>Ngày lập: ${formatDisplayDate(todayStr)}</i>\n\n`;
+    msg += `📈 <b>Thống kê chung:</b>\n`;
+    msg += `• Tổng số thiết bị: <b>${devices.length}</b> máy\n`;
+    msg += `• Đã quá hạn (⚠️ Nguy cấp): <code>${expiredList.length}</code> máy\n`;
+    msg += `• Sắp hết hạn (🔴 Cận hạn): <code>${warningList.length}</code> máy\n`;
+    msg += `• Trạng thái an toàn: <b>${devices.length - expiredList.length - warningList.length}</b> máy\n\n`;
+
+    if (expiredList.length > 0) {
+      msg += `⚠️ <b>DANH SÁCH THIẾT BỊ QUÁ HẠN:</b>\n`;
+      expiredList.slice(0, 8).forEach((d, i) => {
+        const gkdDays = getDaysRemaining(d.expiryGKD);
+        const gcpDays = getDaysRemaining(d.expiryGCP);
+        const reasons = [];
+        if (gkdDays !== null && gkdDays < 0) reasons.push(`GKĐ quá ${Math.abs(gkdDays)} ngày`);
+        if (gcpDays !== null && gcpDays < 0) reasons.push(`GCP quá ${Math.abs(gcpDays)} ngày`);
+        msg += `${i + 1}. <b>${d.name}</b> (Model: ${d.model || 'N/A'})\n`;
+        msg += `   └ <i>Trạng thái: ${reasons.join(', ')}</i>\n`;
+      });
+      if (expiredList.length > 8) {
+        msg += `   ...và ${expiredList.length - 8} thiết bị quá hạn khác.\n`;
+      }
+      msg += `\n`;
+    }
+
+    if (warningList.length > 0) {
+      msg += `🔴 <b>DANH SÁCH THIẾT BỊ SẮP HẾT HẠN (CẬN HẠN):</b>\n`;
+      warningList.slice(0, 8).forEach((d, i) => {
+        const gkdDays = getDaysRemaining(d.expiryGKD);
+        const gcpDays = getDaysRemaining(d.expiryGCP);
+        const warnDetails = [];
+        if (gkdDays !== null && gkdDays >= 0 && gkdDays <= warningDaysGKD) warnDetails.push(`GKĐ còn ${gkdDays} ngày`);
+        if (gcpDays !== null && gcpDays >= 0 && gcpDays <= warningDaysGCP) warnDetails.push(`GCP còn ${gcpDays} ngày`);
+        msg += `${i + 1}. <b>${d.name}</b> (Model: ${d.model || 'N/A'})\n`;
+        msg += `   └ <i>Còn lại: ${warnDetails.join(', ')}</i>\n`;
+      });
+      if (warningList.length > 8) {
+        msg += `   ...và ${warningList.length - 8} thiết bị cận hạn khác.\n`;
+      }
+      msg += `\n`;
+    }
+
+    msg += `🔗 <i>Đồng bộ hóa dữ liệu trực tiếp tại hệ thống của bạn!</i>`;
+
+    const success = await handleSendTelegramTestMessage(msg);
+    if (success) {
+      alert('Đã gửi báo cáo tổng hợp tình trạng thiết bị qua Telegram thành công!');
+    }
   };
 
   const stats = useMemo(() => {
@@ -939,41 +1151,7 @@ const DeviceDashboard: React.FC = () => {
               </button>
             </div>
 
-            {/* 2. Separate Google Drive Document Storage Indicator */}
-            {isDriveConnected ? (
-              <div className="flex items-center gap-2.5 bg-green-50 border border-green-200 pl-3 pr-2 py-1.5 rounded-2xl">
-                <Cloud className="text-green-600 animate-pulse" size={17} />
-                <div className="text-left hidden md:block">
-                  <div className="text-xs font-bold text-green-800 leading-tight">
-                    Đã lưu Drive
-                  </div>
-                  <div className="text-[10px] text-green-600 font-mono line-clamp-1 max-w-[130px] leading-none mt-0.5">
-                    {driveUserEmail}
-                  </div>
-                </div>
-                <button
-                  onClick={handleDisconnectDrive}
-                  disabled={authLoading}
-                  className="p-1.5 text-green-400 hover:text-red-500 rounded-lg hover:bg-green-100 transition-colors cursor-pointer"
-                  title="Ngắt kết nối lưu trữ"
-                >
-                  <X size={15} />
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={handleConnectDrive}
-                disabled={authLoading}
-                className="inline-flex items-center gap-2 px-3.5 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-sm font-semibold rounded-2xl transition-all shadow-xs cursor-pointer disabled:opacity-50"
-              >
-                {authLoading ? (
-                  <Loader2 className="animate-spin text-slate-400" size={15} />
-                ) : (
-                  <Cloud className="text-slate-400" size={15} />
-                )}
-                <span>Liên kết Google Drive</span>
-              </button>
-            )}
+
 
             <button 
               onClick={handleExportExcel}
@@ -1161,6 +1339,14 @@ const DeviceDashboard: React.FC = () => {
               setWarningDaysGKD={setWarningDaysGKD}
               warningDaysBD={warningDaysBD}
               setWarningDaysBD={setWarningDaysBD}
+              telegramBotToken={telegramBotToken}
+              setTelegramBotToken={setTelegramBotToken}
+              telegramChatId={telegramChatId}
+              setTelegramChatId={setTelegramChatId}
+              telegramEnabled={telegramEnabled}
+              setTelegramEnabled={setTelegramEnabled}
+              onSendTestMessage={handleSendTelegramTestMessage}
+              onSendSummaryReport={handleSendTelegramSummaryReport}
             />
           ) : (
             <LegalDocumentsPanel 
@@ -1461,10 +1647,34 @@ const DeviceForm = ({ initialData, onSave, onCancel }: { initialData?: Device, o
     yearOfProduction: new Date().getFullYear(),
     expiryGCP: '',
     expiryGKD: '',
+    gcpIssueDate: '',
+    gcpPeriod: 12,
+    gkdIssueDate: '',
+    gkdPeriod: 12,
     lastMaintenance: '',
     maintenancePeriod: 6,
     notes: ''
   });
+
+  const handleGcpChange = (updates: { gcpIssueDate?: string; gcpPeriod?: number; expiryGCP?: string }) => {
+    const nextData = { ...formData, ...updates };
+    if (updates.gcpIssueDate !== undefined || updates.gcpPeriod !== undefined) {
+      if (nextData.gcpIssueDate && nextData.gcpPeriod) {
+        nextData.expiryGCP = calculateExpiryFromIssue(nextData.gcpIssueDate, nextData.gcpPeriod);
+      }
+    }
+    setFormData(nextData);
+  };
+
+  const handleGkdChange = (updates: { gkdIssueDate?: string; gkdPeriod?: number; expiryGKD?: string }) => {
+    const nextData = { ...formData, ...updates };
+    if (updates.gkdIssueDate !== undefined || updates.gkdPeriod !== undefined) {
+      if (nextData.gkdIssueDate && nextData.gkdPeriod) {
+        nextData.expiryGKD = calculateExpiryFromIssue(nextData.gkdIssueDate, nextData.gkdPeriod);
+      }
+    }
+    setFormData(nextData);
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -1551,28 +1761,91 @@ const DeviceForm = ({ initialData, onSave, onCancel }: { initialData?: Device, o
 
       <div className="h-px bg-slate-100 my-2" />
 
-      <div className="grid grid-cols-2 gap-6">
-        <div className="col-span-2 text-xs font-bold text-blue-600 uppercase tracking-widest bg-blue-50 py-2 px-4 rounded-lg inline-block">
+      <div className="space-y-4">
+        <div className="text-xs font-bold text-blue-600 uppercase tracking-widest bg-blue-50 py-2 px-4 rounded-lg inline-block w-full">
           Hồ sơ pháp lý & Kiểm định
         </div>
-        <div>
-          <label className={labelClass}>Hạn Giấy phép (GCP)</label>
-          <input 
-            type="date"
-            className={inputClass}
-            value={formData.expiryGCP}
-            onChange={(e) => setFormData({ ...formData, expiryGCP: e.target.value })}
-          />
+
+        {/* Giấy phép GCP Section */}
+        <div className="p-4 bg-slate-50/50 rounded-2xl border border-slate-100 space-y-3">
+          <div className="text-xs font-bold text-slate-700 font-sans flex items-center gap-2">
+            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-100 text-[10px] text-blue-700 font-bold">1</span>
+            <span>THÔNG TIN GIẤY PHÉP (GCP)</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label className={labelClass}>Ngày cấp / gia hạn gần nhất</label>
+              <input 
+                type="date"
+                className={inputClass}
+                value={formData.gcpIssueDate || ''}
+                onChange={(e) => handleGcpChange({ gcpIssueDate: e.target.value })}
+              />
+            </div>
+            <div>
+              <label className={labelClass}>Thời hạn hiệu lực (tháng)</label>
+              <input 
+                type="number"
+                min="1"
+                className={inputClass}
+                value={formData.gcpPeriod !== undefined ? formData.gcpPeriod : ''}
+                onChange={(e) => handleGcpChange({ gcpPeriod: e.target.value ? parseInt(e.target.value) : undefined })}
+                placeholder="Ví dụ: 12, 24, 36..."
+              />
+            </div>
+            <div>
+              <label className={labelClass}>Hạn Giấy phép (GCP)</label>
+              <input 
+                type="date"
+                required
+                className={`${inputClass} bg-blue-50/30 border-blue-100 font-semibold text-blue-900`}
+                value={formData.expiryGCP || ''}
+                onChange={(e) => handleGcpChange({ expiryGCP: e.target.value })}
+              />
+            </div>
+          </div>
         </div>
-        <div>
-          <label className={labelClass}>Hạn Kiểm định (GKĐ)</label>
-          <input 
-            type="date"
-            className={inputClass}
-            value={formData.expiryGKD}
-            onChange={(e) => setFormData({ ...formData, expiryGKD: e.target.value })}
-          />
+
+        {/* Kiểm định GKD Section */}
+        <div className="p-4 bg-slate-50/50 rounded-2xl border border-slate-100 space-y-3">
+          <div className="text-xs font-bold text-slate-700 font-sans flex items-center gap-2">
+            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-100 text-[10px] text-emerald-700 font-bold">2</span>
+            <span>THÔNG TIN KIỂM ĐỊNH (GKĐ)</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label className={labelClass}>Ngày kiểm định thực tế</label>
+              <input 
+                type="date"
+                className={inputClass}
+                value={formData.gkdIssueDate || ''}
+                onChange={(e) => handleGkdChange({ gkdIssueDate: e.target.value })}
+              />
+            </div>
+            <div>
+              <label className={labelClass}>Thời hạn hiệu lực (tháng)</label>
+              <input 
+                type="number"
+                min="1"
+                className={inputClass}
+                value={formData.gkdPeriod !== undefined ? formData.gkdPeriod : ''}
+                onChange={(e) => handleGkdChange({ gkdPeriod: e.target.value ? parseInt(e.target.value) : undefined })}
+                placeholder="Ví dụ: 12, 24, 36..."
+              />
+            </div>
+            <div>
+              <label className={labelClass}>Hạn Kiểm định (GKĐ)</label>
+              <input 
+                type="date"
+                required
+                className={`${inputClass} bg-emerald-50/30 border-emerald-100 font-semibold text-emerald-900`}
+                value={formData.expiryGKD || ''}
+                onChange={(e) => handleGkdChange({ expiryGKD: e.target.value })}
+              />
+            </div>
+          </div>
         </div>
+
         <div className="col-span-2">
           <label className={labelClass}>Lần bảo trì cuối cùng</label>
           <input 
@@ -1649,7 +1922,7 @@ const FilterButton = ({ active, onClick, label }: { active: boolean, onClick: ()
 
 interface DeviceRowProps {
   device: Device;
-  onConfirm: (id: string, type: 'GCP' | 'GKD' | 'BD', manualDate?: string) => void;
+  onConfirm: (id: string, type: 'GCP' | 'GKD' | 'BD', manualDate?: string, issueDate?: string, period?: number) => void;
   onDelete: (id: string) => void;
   onEdit: (device: Device) => void;
   onShowHistory: (device: Device) => void;
@@ -1686,55 +1959,137 @@ const DeviceRowV2 = ({ device, onConfirm, onDelete, onEdit, onShowHistory, onSho
     );
   };
 
-  const DateCell = ({ label, date, days, type, warningDays }: { label: string, date: string, days: number | null, type: 'GCP' | 'GKD', warningDays: number }) => (
-    <div className="group/cell relative">
-      <div className="flex items-center gap-2">
-        <div className={`text-sm ${getStatusColor(days, warningDays)}`}>
-          {formatDisplayDate(date)}
-        </div>
-        <button 
-          onClick={() => {
-            setEditingField(type);
-            setTempDate(date || new Date().toISOString().split('T')[0]);
-          }}
-          className="opacity-0 group-hover/cell:opacity-100 transition-opacity p-1 hover:bg-slate-100 rounded text-slate-400"
-          title="Sửa ngày"
-        >
-          <Pencil size={12} />
-        </button>
-      </div>
-      {getDayBadge(days, warningDays)}
-      
-      {editingField === type && (
-        <div className="absolute top-0 left-0 z-20 bg-white p-2 shadow-xl rounded-lg border border-slate-200 flex flex-col gap-2">
-          <label className="text-[10px] font-bold text-slate-500 uppercase">Cập nhật ngày {type}</label>
-          <input 
-            type="date" 
-            className="text-sm border border-slate-200 rounded px-2 py-1 outline-none focus:ring-2 focus:ring-blue-500"
-            value={tempDate}
-            onChange={(e) => setTempDate(e.target.value)}
-          />
-          <div className="flex gap-1 justify-end">
-            <button 
-              onClick={() => setEditingField(null)}
-              className="p-1 hover:bg-slate-100 rounded text-slate-400"
-            >
-              <X size={14} />
-            </button>
+  const DateCell = ({ label, date, days, type, warningDays }: { label: string, date: string, days: number | null, type: 'GCP' | 'GKD', warningDays: number }) => {
+    const [issueDate, setIssueDate] = useState(type === 'GCP' ? (device.gcpIssueDate || '') : (device.gkdIssueDate || ''));
+    const [period, setPeriod] = useState<number>(type === 'GCP' ? (device.gcpPeriod || 12) : (device.gkdPeriod || 12));
+    const [localTempDate, setLocalTempDate] = useState(date || '');
+
+    React.useEffect(() => {
+      if (editingField === type) {
+        setIssueDate(type === 'GCP' ? (device.gcpIssueDate || '') : (device.gkdIssueDate || ''));
+        setPeriod(type === 'GCP' ? (device.gcpPeriod || 12) : (device.gkdPeriod || 12));
+        setLocalTempDate(date || '');
+      }
+    }, [editingField, type, date]);
+
+    const handleLocalIssueDateChange = (val: string) => {
+      setIssueDate(val);
+      if (val && period) {
+        const nextDate = calculateExpiryFromIssue(val, period);
+        if (nextDate) setLocalTempDate(nextDate);
+      }
+    };
+
+    const handleLocalPeriodChange = (val: number) => {
+      setPeriod(val);
+      if (issueDate && val) {
+        const nextDate = calculateExpiryFromIssue(issueDate, val);
+        if (nextDate) setLocalTempDate(nextDate);
+      }
+    };
+
+    return (
+      <div className="group/cell relative select-none">
+        <div className="flex flex-col">
+          <div className="flex items-center gap-2">
+            <div className={`text-sm ${getStatusColor(days, warningDays)}`}>
+              {formatDisplayDate(date)}
+            </div>
             <button 
               onClick={() => {
-                onConfirm(device.id, type, tempDate);
-                setEditingField(null);
+                setEditingField(type);
               }}
-              className="px-2 py-1 bg-blue-600 text-white text-[10px] font-bold rounded"
+              className="opacity-0 group-hover/cell:opacity-100 transition-opacity p-1 hover:bg-slate-100 rounded text-slate-400 cursor-pointer"
+              title="Sửa nhanh thông tin"
             >
-              Lưu
+              <Pencil size={12} />
             </button>
           </div>
+          {type === 'GCP' && device.gcpIssueDate && (
+            <div className="text-[10px] text-slate-400 mt-0.5 leading-tight font-medium">
+              Gia hạn: {formatDisplayDate(device.gcpIssueDate)} ({device.gcpPeriod} tháng)
+            </div>
+          )}
+          {type === 'GKD' && device.gkdIssueDate && (
+            <div className="text-[10px] text-slate-400 mt-0.5 leading-tight font-medium">
+              Kiểm định: {formatDisplayDate(device.gkdIssueDate)} ({device.gkdPeriod} tháng)
+            </div>
+          )}
         </div>
-      )}
-    </div>
-  );
+        {getDayBadge(days, warningDays)}
+        
+        {editingField === type && (
+          <div className="absolute top-0 left-0 z-35 bg-white p-4 shadow-2xl rounded-2xl border border-slate-200/80 flex flex-col gap-3 min-w-[270px]">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+              <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider font-sans">
+                {type === 'GCP' ? 'Cập nhật Giấy phép (GCP)' : 'Cập nhật Kiểm định (GKĐ)'}
+              </span>
+              <button 
+                onClick={() => setEditingField(null)}
+                className="p-1 hover:bg-slate-100 rounded text-slate-400 cursor-pointer"
+                title="Đóng popup"
+              >
+                <X size={13} />
+              </button>
+            </div>
+            
+            <div className="flex flex-col gap-1">
+              <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">
+                {type === 'GCP' ? 'Ngày gia hạn gần nhất' : 'Ngày thực hiện kiểm định'}
+              </label>
+              <input 
+                type="date" 
+                className="text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 outline-none focus:ring-2 focus:ring-blue-500 w-full font-sans"
+                value={issueDate}
+                onChange={(e) => handleLocalIssueDateChange(e.target.value)}
+              />
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Thời hạn hiệu lực (tháng)</label>
+              <input 
+                type="number" 
+                min="1"
+                className="text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 outline-none focus:ring-2 focus:ring-blue-500 w-full font-sans"
+                value={period}
+                onChange={(e) => handleLocalPeriodChange(e.target.value ? parseInt(e.target.value) : 12)}
+              />
+            </div>
+
+            <div className="flex flex-col gap-1 bg-blue-50/20 p-2.5 rounded-xl border border-blue-50/50">
+              <label className="text-[9px] font-bold text-blue-500 uppercase tracking-wide">Hạn hết hạn mới dự kiến</label>
+              <input 
+                type="date" 
+                className="text-xs border border-blue-100 bg-white font-semibold text-blue-900 rounded-lg px-2.5 py-1.5 outline-none focus:ring-2 focus:ring-blue-500 w-full font-sans"
+                value={localTempDate}
+                onChange={(e) => setLocalTempDate(e.target.value)}
+              />
+            </div>
+
+            <div className="flex gap-2 justify-end pt-1">
+              <button 
+                type="button"
+                onClick={() => setEditingField(null)}
+                className="px-3 py-1.5 hover:bg-slate-100 rounded-lg text-[10px] text-slate-500 font-bold tracking-tight cursor-pointer border border-slate-100"
+              >
+                Hủy bỏ
+              </button>
+              <button 
+                type="button"
+                onClick={() => {
+                  onConfirm(device.id, type, localTempDate, issueDate, period);
+                  setEditingField(null);
+                }}
+                className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-bold rounded-lg cursor-pointer shadow-sm shadow-blue-100 font-sans tracking-wide"
+              >
+                Lưu lại
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <motion.tr 
@@ -1965,6 +2320,14 @@ interface SettingsPanelProps {
   setWarningDaysGKD: (val: number) => void;
   warningDaysBD: number;
   setWarningDaysBD: (val: number) => void;
+  telegramBotToken: string;
+  setTelegramBotToken: (val: string) => void;
+  telegramChatId: string;
+  setTelegramChatId: (val: string) => void;
+  telegramEnabled: boolean;
+  setTelegramEnabled: (val: boolean) => void;
+  onSendTestMessage: (message: string) => Promise<boolean>;
+  onSendSummaryReport: () => Promise<void>;
 }
 
 const SettingsPanel: React.FC<SettingsPanelProps> = ({
@@ -1982,7 +2345,15 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   warningDaysGKD,
   setWarningDaysGKD,
   warningDaysBD,
-  setWarningDaysBD
+  setWarningDaysBD,
+  telegramBotToken,
+  setTelegramBotToken,
+  telegramChatId,
+  setTelegramChatId,
+  telegramEnabled,
+  setTelegramEnabled,
+  onSendTestMessage,
+  onSendSummaryReport
 }) => {
   const [email, setEmail] = useState('');
   const [isSubscribed, setIsSubscribed] = useState(false);
@@ -1991,6 +2362,75 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
     expiryGKD: true,
     maintenance: true
   });
+
+  // Telegram scanner states
+  const [scanning, setScanning] = useState(false);
+  const [scanResult, setScanResult] = useState<{ id: string; name: string; type: string }[]>([]);
+  const [scanError, setScanError] = useState<string | null>(null);
+
+  const handleScanRecentChats = async () => {
+    if (!telegramBotToken) {
+      alert('Vui lòng nhập Telegram Bot Token trước khi quét tìm.');
+      return;
+    }
+    setScanning(true);
+    setScanError(null);
+    setScanResult([]);
+    try {
+      const url = `https://api.telegram.org/bot${telegramBotToken}/getUpdates`;
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error('API Telegram phản hồi lỗi. Hãy kiểm tra Bot Token của bạn có đúng không.');
+      }
+      const data = await response.json();
+      if (!data.ok) {
+        throw new Error(data.description || 'Không thể lấy dữ liệu.');
+      }
+      const updates = data.result || [];
+      const chatsMap = new Map<string, { id: string; name: string; type: string }>();
+
+      updates.forEach((u: any) => {
+        const chatInfo = u.message?.chat || u.my_chat_member?.chat || u.edited_message?.chat || u.channel_post?.chat;
+        if (chatInfo) {
+          const idStr = String(chatInfo.id);
+          let name = chatInfo.title || '';
+          if (!name) {
+            const first = chatInfo.first_name || '';
+            const last = chatInfo.last_name || '';
+            name = `${first} ${last}`.trim() || chatInfo.username || `User ID: ${idStr}`;
+          }
+          chatsMap.set(idStr, {
+            id: idStr,
+            name,
+            type: chatInfo.type || 'unknown'
+          });
+        }
+      });
+
+      const uniqueChats = Array.from(chatsMap.values());
+      setScanResult(uniqueChats);
+      if (uniqueChats.length === 0) {
+        setScanError('Chưa nhận được tin nhắn nào gần đây. Hãy gửi 1 tin nhắn bất kỳ cho Bot hoặc thêm Bot vào Nhóm, rồi bấm Quét lại.');
+      }
+    } catch (err: any) {
+      console.error('Lỗi khi quét tin nhắn Telegram:', err);
+      setScanError(err.message || 'Không thể kết nối đến API Telegram.');
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  const chatIdWarning = useMemo(() => {
+    if (!telegramChatId) return null;
+    const cleanId = telegramChatId.trim();
+    if (/[a-zA-Z]/.test(cleanId)) {
+      return "⚠️ Chat ID phải là số (Ví dụ: -10012345678 hoặc 98765432). Hãy điền đúng dạng số.";
+    }
+    if (cleanId.length > 5 && !cleanId.startsWith('-')) {
+      return "💡 Lưu ý: Đối với chat nhóm/kênh, ID thường bắt đầu bằng dấu trừ '-' (ví dụ: -100112233).";
+    }
+    return null;
+  }, [telegramChatId]);
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
@@ -2149,6 +2589,259 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
               )}
               <span className="text-xs font-bold uppercase tracking-widest">
                 Thông báo Email: {isSubscribed ? `Đang hoạt động (${email})` : 'Chưa kích hoạt'}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* SECTION 1.2: Telegram Notification Settings */}
+      <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden" id="telegram-settings-section">
+        <div className="p-8 border-b border-slate-100 bg-slate-50/50">
+          <div className="flex items-center justify-between flex-wrap gap-4 mb-2">
+            <div className="flex items-center gap-4">
+              <div className="p-3 bg-sky-500 text-white rounded-2xl shadow-lg shadow-sky-100">
+                <Send size={24} />
+              </div>
+              <div>
+                <h2 className="text-2xl font-bold text-slate-800 tracking-tight font-sans">Cấu hình thông báo Telegram</h2>
+                <p className="text-sm text-slate-500 font-sans">Nhận thông báo lập tức tới điện thoại khi hồ sơ đến hạn</p>
+              </div>
+            </div>
+            
+            <button
+              type="button"
+              onClick={() => setTelegramEnabled(!telegramEnabled)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold transition-all cursor-pointer border ${
+                telegramEnabled
+                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                  : 'bg-slate-100 text-slate-500 border-slate-200'
+              }`}
+            >
+              <div className={`w-2.5 h-2.5 rounded-full ${telegramEnabled ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`} />
+              {telegramEnabled ? 'BẬT GỬI TỰ ĐỘNG' : 'TẮT GỬI TỰ ĐỘNG'}
+            </button>
+          </div>
+        </div>
+
+        <div className="p-8 space-y-6">
+          <section className="space-y-4">
+            <h3 className="text-sm font-extrabold text-slate-400 uppercase tracking-widest flex items-center gap-2 font-sans">
+              Thông tin kết nối Telegram Bot
+            </h3>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block font-sans">
+                  Telegram Bot Token
+                </label>
+                <input
+                  type="password"
+                  placeholder="Ví dụ: 1234567890:ABCdefGh..."
+                  className="w-full rounded-2xl bg-slate-50 border border-slate-200 px-5 py-3 text-sm outline-none focus:ring-2 focus:ring-sky-500 transition-all font-mono text-slate-700"
+                  value={telegramBotToken}
+                  onChange={(e) => setTelegramBotToken(e.target.value.trim())}
+                />
+                <p className="text-[11px] text-slate-400">
+                  Nhận Token bằng cách tạo bot qua <b>@BotFather</b> trên Telegram.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block font-sans">
+                  Telegram Chat ID / Group ID
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ví dụ: -1001234567890 hoặc 987654321"
+                  className={`w-full rounded-2xl bg-slate-50 border px-5 py-3 text-sm outline-none focus:ring-2 focus:ring-sky-500 transition-all font-mono text-slate-700 ${
+                    chatIdWarning ? 'border-amber-300 focus:ring-amber-500' : 'border-slate-200'
+                  }`}
+                  value={telegramChatId}
+                  onChange={(e) => setTelegramChatId(e.target.value.trim())}
+                />
+                {chatIdWarning ? (
+                  <p className="text-xs text-amber-600 font-medium font-sans animate-fade-in">
+                    {chatIdWarning}
+                  </p>
+                ) : (
+                  <p className="text-[11px] text-slate-400">
+                    ID người nhận cá nhân hoặc ID của nhóm/kênh Telegram.
+                  </p>
+                )}
+              </div>
+            </div>
+          </section>
+
+          {/* DYNAMIC RECENTS FINDER (GETUPDATES SCANNER) */}
+          <section className="bg-slate-50 rounded-2xl p-6 border border-slate-100 space-y-4">
+            <div className="flex items-center justify-between flex-wrap gap-4">
+              <div>
+                <h4 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
+                  <RefreshCw size={16} className="text-sky-500" />
+                  Không biết tìm Chat ID? Sử dụng tính năng quét tự động
+                </h4>
+                <p className="text-xs text-slate-500 mt-1">
+                  Nhắn tin gì đó cho Bot của bạn rồi nhấn quét bên dưới để tìm ID ngay lập tức.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleScanRecentChats}
+                disabled={scanning || !telegramBotToken}
+                className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  telegramBotToken
+                    ? 'bg-sky-50 text-sky-600 hover:bg-sky-100 border border-sky-100'
+                    : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
+                }`}
+              >
+                {scanning ? (
+                  <>
+                    <Loader2 size={14} className="animate-spin text-sky-600" />
+                    Đang quét...
+                  </>
+                ) : (
+                  <>
+                    <Search size={14} />
+                    Quét Chat ID gần đây
+                  </>
+                )}
+              </button>
+            </div>
+
+            {scanError && (
+              <div className="bg-amber-50/50 border border-amber-100 rounded-xl p-4 text-xs text-slate-600 leading-relaxed font-sans mt-3">
+                <div className="flex gap-2 text-amber-800 font-bold mb-1">
+                  <AlertCircle size={14} className="mt-0.5 shrink-0" />
+                  Hướng dẫn tự động lấy Chat ID:
+                </div>
+                <div className="pl-6 space-y-1 text-slate-600">
+                  <p>1. Tìm nickname Bot của bạn trên Telegram và nhấn nút <b>"BẮT ĐẦU" (START)</b></p>
+                  <p>2. Gửi một tin nhắn bất kỳ (Ví dụ: <code>test</code>) cho Bot.</p>
+                  <p>3. <i>Nếu muốn nhận ở Group</i>: Hãy <b>Thêm Bot vào Nhóm</b> trước, rồi gửi một tin nhắn vào nhóm đó.</p>
+                  <p>4. Sau khi hoàn thành các bước trên, hãy nhấn lại nút <b>"Quét Chat ID gần đây"</b> để lấy ID tự động!</p>
+                  <p className="text-[10px] text-amber-500 mt-2 font-mono italic">Chi tiết lỗi: {scanError}</p>
+                </div>
+              </div>
+            )}
+
+            {scanResult.length > 0 && (
+              <div className="bg-emerald-50/50 border border-emerald-100 rounded-xl p-4 mt-3 space-y-3">
+                <div className="text-xs font-extrabold text-emerald-800 uppercase tracking-wider flex items-center gap-1.5">
+                  <CheckCircle2 size={14} />
+                  Tìm thấy {scanResult.length} cuộc trò chuyện gần đây có liên tác:
+                </div>
+                <div className="max-h-40 overflow-y-auto space-y-2 pr-2">
+                  {scanResult.map((chat) => (
+                    <div key={chat.id} className="bg-white p-3 rounded-lg border border-emerald-100/60 flex items-center justify-between text-xs transition-all hover:shadow-xs">
+                      <div className="space-y-0.5">
+                        <div className="font-bold text-slate-800 flex items-center gap-2">
+                          <span className="px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500 scale-90 text-[10px] inline-block uppercase font-extrabold">
+                            {chat.type}
+                          </span>
+                          {chat.name}
+                        </div>
+                        <div className="text-[11px] font-mono text-slate-500">ID: <code>{chat.id}</code></div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setTelegramChatId(chat.id);
+                          if (!telegramEnabled) {
+                            setTelegramEnabled(true);
+                          }
+                          alert(`Đã áp dụng Chat ID: ${chat.name} (${chat.id})`);
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white font-extrabold text-[11px] hover:bg-emerald-700 transition-colors cursor-pointer"
+                      >
+                        Sử dụng ID này
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </section>
+
+          {/* TROUBLESHOOTING HELP DRAWER */}
+          <section className="bg-amber-50/30 border border-amber-200/50 rounded-2xl p-6">
+            <div className="flex gap-3">
+              <HelpCircle className="text-amber-500 shrink-0 mt-0.5" size={20} />
+              <div className="space-y-1">
+                <h4 className="text-sm font-bold text-slate-800">Cơ chế sửa lỗi kết nối "chat not found":</h4>
+                <div className="text-xs text-slate-600 space-y-2 leading-relaxed">
+                  <p>Khi Telegram trả về lỗi <b>"chat not found" (Không tìm thấy Chat ID)</b>, đây là lỗi trả về từ hệ thống bảo mật Telegram do Bot chưa có quyền bắt đầu liên lạc với bạn. Hãy khắc phục theo 2 trường hợp bên dưới:</p>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                    <div className="bg-white p-4 rounded-xl border border-amber-100/50">
+                      <p className="font-bold text-amber-800 mb-1">Trường hợp 1: Nhận tin cá nhân 👤</p>
+                      <p className="text-slate-500 font-sans leading-relaxed">
+                        Tìm kiếm ID Bot của bạn trên Telegram, ấn <b>"BẮT ĐẦU" (START)</b> để cho phép Bot trò chuyện cá nhân. Lấy Chat ID của bạn thông qua bot <code>@userinfobot</code>.
+                      </p>
+                    </div>
+                    <div className="bg-white p-4 rounded-xl border border-amber-100/50">
+                      <p className="font-bold text-amber-800 mb-1">Trường hợp 2: Gửi vào Nhóm / Kênh 👥</p>
+                      <p className="text-slate-500 font-sans leading-relaxed">
+                        Bạn phải <b>THÊM BOT của bạn vào Nhóm</b> trước, sau đó lấy Group ID (Có dạng số bắt đầu bằng dấu trừ <code>-</code> như <code>-100xxxxxxxxxx</code>).
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <div className="h-px bg-slate-100" />
+
+          {/* Action buttons */}
+          <section className="flex flex-wrap gap-4">
+            <button
+              type="button"
+              onClick={async () => {
+                const checked = await onSendTestMessage('🔔 <b>Kiểm thử thành công!</b>\nTelegram Bot của bạn đã kết nối thành công tới Hệ thống quản lý hồ sơ đo lường thiết bị. 🎉');
+                if (checked) {
+                  alert('Kiểm tra Telegram thành công! Hãy kiểm tra cửa sổ chat Telegram của bạn.');
+                }
+              }}
+              disabled={!telegramBotToken || !telegramChatId}
+              className={`flex items-center justify-center gap-2 px-6 py-3 rounded-2xl text-sm font-bold transition-all cursor-pointer ${
+                telegramBotToken && telegramChatId
+                  ? 'bg-sky-500 text-white shadow-lg shadow-sky-100 hover:bg-sky-600'
+                  : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+              }`}
+            >
+              <Send size={16} />
+              Gửi tin nhắn thử
+            </button>
+
+            <button
+              type="button"
+              onClick={async () => {
+                await onSendSummaryReport();
+              }}
+              disabled={!telegramBotToken || !telegramChatId}
+              className={`flex items-center justify-center gap-2 px-6 py-3 rounded-2xl text-sm font-bold transition-all cursor-pointer ${
+                telegramBotToken && telegramChatId
+                  ? 'bg-slate-800 text-white shadow-lg shadow-slate-100 hover:bg-slate-900 border border-slate-700'
+                  : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+              }`}
+            >
+              <FileText size={16} />
+              Gửi báo cáo tổng hợp hiện tại
+            </button>
+          </section>
+        </div>
+
+        <div className="p-6 bg-slate-900 border-t border-slate-800">
+          <div className="flex items-center justify-between text-white">
+            <div className="flex items-center gap-3">
+              {telegramEnabled && telegramBotToken && telegramChatId ? (
+                <div className="w-2 h-2 rounded-full bg-sky-400 animate-pulse" />
+              ) : (
+                <div className="w-2 h-2 rounded-full bg-slate-600" />
+              )}
+              <span className="text-xs font-bold uppercase tracking-widest font-sans">
+                Trạng thái: {telegramEnabled && telegramBotToken && telegramChatId ? 'Đồng bộ tự động cảnh báo thời gian thực' : 'Chưa bật đồng bộ tự động'}
               </span>
             </div>
           </div>
@@ -2413,19 +3106,45 @@ const LegalDocumentsPanel = ({
         { id: '3', name: 'Huong_Dan_Su_Dung.docx', type: 'DOCX', uploadDate: '2023-10-05', size: '2.5 MB' },
       ];
     });
+    // Thêm thư mục lưu trữ tài liệu chung, văn bản pháp quy, chứng chỉ nhân viên
+    initialDocs['shared-legal-docs-folder'] = [
+      { id: 'shared-1', name: 'NghiDinh_98_2021_ND-CP_QuanLyTrangThietBiYTe.pdf', type: 'PDF', uploadDate: '2021-11-08', size: '3.4 MB' },
+      { id: 'shared-2', name: 'QuyetDinh_1522_QuyCongBoGiaThietBi.pdf', type: 'PDF', uploadDate: '2023-04-12', size: '1.1 MB' },
+      { id: 'shared-3', name: 'ChungChi_KyThuatVien_NguyenVanA.pdf', type: 'PDF', uploadDate: '2024-02-15', size: '1.8 MB' },
+      { id: 'shared-4', name: 'NghiDinh_07_2023_SuaDoiNghiDinh98.pdf', type: 'PDF', uploadDate: '2023-03-03', size: '2.0 MB' },
+    ];
     return initialDocs;
   });
 
   const [loadingDrive, setLoadingDrive] = useState(false);
+  const [driveError, setDriveError] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
-  const selectedDevice = devices.find(d => d.id === selectedDeviceId);
+  const selectedDevice = (() => {
+    if (selectedDeviceId === 'shared-legal-docs-folder') {
+      return {
+        id: 'shared-legal-docs-folder',
+        name: 'Văn bản pháp quy & Chứng chỉ nhân viên',
+        model: 'Văn bản luật, nghị định, quyết định, chứng chỉ hành nghề...',
+        expiryGCP: '',
+        expiryGKD: '',
+        lastMaintenance: '',
+        maintenancePeriod: 0,
+        serialNumber: 'SYSTEM_SHARED',
+        origin: 'Hệ thống',
+        yearOfProduction: '2026',
+      };
+    }
+    return devices.find(d => d.id === selectedDeviceId);
+  })();
 
   // Fetch or retrieve folder files when device gets selected in Connected state
   React.useEffect(() => {
     if (selectedDeviceId && isDriveConnected && selectedDevice) {
       const loadDeviceFiles = async () => {
         setLoadingDrive(true);
+        setDriveError(null);
         try {
           let folderId = driveFolderIds[selectedDeviceId];
           if (!folderId) {
@@ -2434,25 +3153,22 @@ const LegalDocumentsPanel = ({
           }
           const filesFound = await listFolderFiles(folderId);
           setDriveFiles(prev => ({ ...prev, [selectedDeviceId]: filesFound }));
+          setDriveError(null);
         } catch (err: any) {
           console.error(err);
+          setDriveError(err.message || String(err));
         } finally {
           setLoadingDrive(false);
         }
       };
       loadDeviceFiles();
+    } else {
+      setDriveError(null);
     }
   }, [selectedDeviceId, isDriveConnected]);
 
-  const handleUploadClick = () => {
-    fileInputRef.current?.click();
-  };
-
-
-
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !selectedDeviceId) return;
+  const uploadSingleFile = async (file: File) => {
+    if (!selectedDeviceId) return;
 
     if (isDriveConnected) {
       // Real Google Drive Upload
@@ -2495,8 +3211,40 @@ const LegalDocumentsPanel = ({
         onActionLog(selectedDeviceId, `Tải lên tài liệu ngoại tuyến: "${file.name}"`, 'UPLOAD');
       }
     }
+  };
+
+  const handleUploadClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !selectedDeviceId) return;
+    await uploadSingleFile(file);
     // Clear input
     e.target.value = '';
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    if (!selectedDeviceId) return;
+
+    const files = e.dataTransfer.files;
+    if (files && files.length > 0) {
+      const file = files[0];
+      await uploadSingleFile(file);
+    }
   };
 
   const handleDelete = async (docId: string) => {
@@ -2583,7 +3331,35 @@ const LegalDocumentsPanel = ({
     : (mockDocs[selectedDeviceId || ''] || []);
 
   return (
-    <div className="flex-1 flex flex-col min-h-0 bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+    <div 
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      className="flex-1 flex flex-col min-h-0 bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden relative"
+    >
+      {isDragging && selectedDeviceId && (
+        <div className="absolute inset-x-2 inset-y-2 z-50 bg-blue-50/95 backdrop-blur-[2px] flex flex-col items-center justify-center border-4 border-dashed border-blue-500 rounded-[22px] transition-all duration-200 animate-fade-in pointer-events-none">
+          <div className="p-5 bg-blue-100 text-blue-600 rounded-3xl mb-4 animate-bounce">
+            <Upload size={42} />
+          </div>
+          <p className="text-xl font-bold text-blue-800 font-sans">Thả tài liệu của bạn tại đây</p>
+          <p className="text-sm text-blue-600 font-medium font-sans mt-2 text-center max-w-md px-6 leading-relaxed">
+            Hệ thống sẽ tự động tải tài liệu lên thư mục tương ứng với thiết bị <strong className="text-blue-900">{selectedDevice?.name || 'Văn bản chung'}</strong>
+          </p>
+        </div>
+      )}
+
+      {isDragging && !selectedDeviceId && (
+        <div className="absolute inset-x-2 inset-y-2 z-50 bg-amber-50/95 backdrop-blur-[2px] flex flex-col items-center justify-center border-4 border-dashed border-amber-500 rounded-[22px] transition-all duration-200 animate-fade-in pointer-events-none">
+          <div className="p-5 bg-amber-100 text-amber-600 rounded-3xl mb-4">
+            <AlertCircle size={42} />
+          </div>
+          <p className="text-xl font-bold text-amber-800 font-sans">Vui lòng mở một thư mục trước</p>
+          <p className="text-sm text-amber-600 font-medium font-sans mt-2 text-center max-w-md px-6 leading-relaxed">
+            Hãy click chọn mở một thư mục quản lý thiết bị phía dưới, sau đó kéo thả tệp vào đây để tải lên.
+          </p>
+        </div>
+      )}
       
       {/* Top Google Drive Connection Info Bar */}
       <div className="px-6 py-3.5 bg-slate-50 border-b border-slate-150 flex flex-col sm:flex-row gap-3 items-center justify-between text-xs font-sans">
@@ -2659,8 +3435,88 @@ const LegalDocumentsPanel = ({
             <Loader2 size={40} className="text-blue-600 animate-spin mb-4" />
             <p className="text-sm font-medium">Đang tải tài liệu từ Google Drive của bạn...</p>
           </div>
+        ) : driveError ? (
+          <div className="mx-auto max-w-2xl bg-amber-50/60 border border-amber-200 rounded-3xl p-8 space-y-4 shadow-sm animate-fade-in my-6">
+            <div className="flex items-start gap-4">
+              <div className="p-3 bg-amber-100 text-amber-850 rounded-2xl shrink-0">
+                <AlertCircle size={28} />
+              </div>
+              <div className="space-y-1.5 flex-1">
+                <h3 className="text-lg font-bold text-slate-800 font-sans">Lỗi truy cập bộ nhớ Google Drive</h3>
+                <p className="text-sm text-slate-600 font-sans whitespace-pre-wrap leading-relaxed">
+                  {(() => {
+                    const urlRegex = /(https?:\/\/[^\s]+)/g;
+                    const parts = driveError.split(urlRegex);
+                    return parts.map((part, idx) => {
+                      if (part.match(urlRegex)) {
+                        return (
+                          <a
+                            key={idx}
+                            href={part}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-600 hover:text-blue-800 underline font-bold bg-sky-50 px-2 py-0.5 rounded inline-block my-0.5 break-all transition-colors"
+                          >
+                            {part}
+                          </a>
+                        );
+                      }
+                      return part;
+                    });
+                  })()}
+                </p>
+              </div>
+            </div>
+            
+            <div className="flex justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setDriveError(null);
+                  setSelectedDeviceId(null);
+                }}
+                className="px-5 py-2.5 rounded-xl text-xs font-bold bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 transition-colors cursor-pointer"
+              >
+                Quay lại danh sách thư mục
+              </button>
+              
+              <button
+                type="button"
+                onClick={() => {
+                  const currentId = selectedDeviceId;
+                  setSelectedDeviceId(null);
+                  setTimeout(() => {
+                    setSelectedDeviceId(currentId);
+                  }, 50);
+                }}
+                className="px-5 py-2.5 rounded-xl text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 transition-colors shadow-xs cursor-pointer"
+              >
+                Thử tải lại
+              </button>
+            </div>
+          </div>
         ) : !selectedDeviceId ? (
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+            {/* Thư mục tài liệu chung / Văn bản pháp lý & Chứng chỉ nhân viên */}
+            {(() => {
+              const count = isDriveConnected 
+                ? (driveFiles['shared-legal-docs-folder']?.length || 0)
+                : (mockDocs['shared-legal-docs-folder']?.length || 0);
+
+              return (
+                <button 
+                  onClick={() => setSelectedDeviceId('shared-legal-docs-folder')}
+                  className="group flex flex-col items-center p-6 rounded-3xl border border-amber-150 bg-amber-50/10 hover:border-amber-300 hover:bg-amber-50/40 transition-all cursor-pointer text-left w-full shadow-sm"
+                >
+                  <div className="w-16 h-16 bg-amber-100 text-amber-600 rounded-2xl flex items-center justify-center mb-4 shadow-xs group-hover:scale-110 transition-transform">
+                    <Folder size={32} fill="currentColor" fillOpacity={0.3} />
+                  </div>
+                  <div className="text-sm font-bold text-slate-800 text-center line-clamp-2 w-full">Văn bản & Chứng chỉ chung</div>
+                  <div className="text-[10px] text-amber-705 mt-1.5 uppercase font-bold tracking-wider">{count} tài liệu</div>
+                </button>
+              );
+            })()}
+
             {devices.map(device => {
               const count = isDriveConnected 
                 ? (driveFiles[device.id]?.length || 0)
@@ -2670,9 +3526,9 @@ const LegalDocumentsPanel = ({
                 <button 
                   key={device.id}
                   onClick={() => setSelectedDeviceId(device.id)}
-                  className="group flex flex-col items-center p-6 rounded-3xl border border-slate-100 hover:border-blue-200 hover:bg-blue-50/30 transition-all cursor-pointer text-left w-full"
+                  className="group flex flex-col items-center p-6 rounded-3xl border border-slate-100 hover:border-blue-200 hover:bg-blue-50/30 transition-all cursor-pointer text-left w-full shadow-sm"
                 >
-                  <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-2xl flex items-center justify-center mb-4 shadow-sm group-hover:scale-110 transition-transform">
+                  <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-2xl flex items-center justify-center mb-4 shadow-xs group-hover:scale-110 transition-transform">
                     <Folder size={32} fill="currentColor" fillOpacity={0.2} />
                   </div>
                   <div className="text-sm font-bold text-slate-800 text-center line-clamp-2 w-full">{device.name}</div>

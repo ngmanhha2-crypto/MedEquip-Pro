@@ -44,6 +44,10 @@ export const initAuth = (
 
 // Sign in via Firebase Auth popup specifically for Google Drive
 export const googleSignIn = async (): Promise<{ email: string; accessToken: string } | null> => {
+  if (isSigningIn) {
+    console.warn('Yêu cầu đăng nhập Google Drive đang được xử lý, bỏ qua lượt click trùng lặp.');
+    return null;
+  }
   try {
     isSigningIn = true;
     const result = await signInWithPopup(driveAuth, provider);
@@ -59,7 +63,25 @@ export const googleSignIn = async (): Promise<{ email: string; accessToken: stri
     return { email, accessToken: cachedAccessToken };
   } catch (error: any) {
     console.error('Lỗi khi đăng nhập Google:', error);
-    throw error;
+    
+    const isIframe = window.self !== window.top;
+    const errorCode = error?.code || '';
+    const errorMsg = error?.message || String(error);
+    
+    let friendlyError = error;
+    if (errorCode === 'auth/cancelled-popup-request' || errorMsg.includes('cancelled-popup-request')) {
+      if (isIframe) {
+        friendlyError = new Error('Yêu cầu đăng nhập đã bị hủy tự động (cancelled-popup-request).\n\nVì ứng dụng đang chạy bên trong khung xem trước (iframe) của AI Studio, một số trình duyệt (như Chrome, Safari) sẽ tự động chặn các luồng xác thực popup để bảo mật.\n\nCách khắc phục:\n1. Hãy mở ứng dụng bằng một Tab độc lập (click vào góc trên của màn hình ứng dụng).\n2. Tiến hành liên kết lại Google Drive từ tab mới đó.');
+      } else {
+        friendlyError = new Error('Yêu cầu đăng nhập đã được hủy tự động để tránh trùng lặp. Vui lòng kiểm tra xem bạn có nhấn liên tục không, hoặc cấp quyền hiển thị popup cho trang web này.');
+      }
+    } else if (errorCode === 'auth/popup-closed-by-user' || errorMsg.includes('popup-closed-by-user')) {
+      friendlyError = new Error('Cửa sổ đăng nhập Google đã bị đóng trước khi hoàn tất. Vui lòng giữ cửa sổ mở và tiến hành đăng nhập.');
+    } else if (errorCode === 'auth/popup-blocked' || errorMsg.includes('popup-blocked')) {
+      friendlyError = new Error('Trình duyệt của bạn đã chặn cửa sổ đăng nhập (Popup).\n\nHãy cho phép hiển thị Popup từ trang web này hoặc bấm mở ứng dụng trong Tab độc lập mới ở góc trên của AI Studio để liên kết Google Drive dễ dàng hơn.');
+    }
+    
+    throw friendlyError;
   } finally {
     isSigningIn = false;
   }
@@ -105,6 +127,40 @@ export function formatBytes(bytesStr?: string): string {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 }
 
+// Helper to parse detailed Google API error response safely and return a descriptive user-friendly Error
+async function parseGoogleApiError(res: Response, prefix: string): Promise<Error> {
+  let details = '';
+  try {
+    const data = await res.json();
+    if (data.error) {
+      details = data.error.message || JSON.stringify(data.error);
+    } else {
+      details = JSON.stringify(data);
+    }
+  } catch (e) {
+    details = res.statusText || `Mã lỗi HTTP: ${res.status}`;
+  }
+
+  let finalMessage = `${prefix}: ${details}`;
+  if (details.includes('has not been used') || details.includes('disabled') || details.includes('googleapis.com')) {
+    const urlMatch = details.match(/https:\/\/console\S+/);
+    const link = urlMatch ? urlMatch[0].replace(/[\.\,\)\(]+$/, '').trim() : 'https://console.cloud.google.com/apis/library/drive.googleapis.com';
+    finalMessage = `Dịch vụ Google Drive API hiện chưa được kích hoạt trong dự án Google Cloud của bạn (${res.status || '403'} Forbidden).\n\nCách kích hoạt dễ dàng trong 3 bước:\n\n1️⃣ Bước 1: Nhấn giữ hoặc Click trực tiếp vào liên kết Google Cloud Platform chính thức dưới đây:\n👉 ${link}\n\n2️⃣ Bước 2: Nhấn nút màu xanh dương "BẬT" (ENABLE) để khởi chạy dịch vụ lưu trữ này trên tài khoản của bạn.\n\n3️⃣ Bước 3: Đợi khoảng 30 - 60 giây để Google hoàn thành tiến trình kích hoạt hệ thống, sau đó quay lại ứng dụng này và nhấn nút "Thử tải lại" để bắt đầu sao lưu & đồng bộ hồ sơ không giới hạn!`;
+  } else if (res.status === 401) {
+    finalMessage = `Phiên kết nối Google Drive đã hết hạn hoặc bị thu hồi (401 Unauthorized).\n\nCách khắc phục:\n1. Vào phần "Cài đặt" -> "Đồng bộ Google Drive".\n2. Bấm nút "Ngắt kết nối tài khoản Google Drive".\n3. Trở lại trạng thái ngoại tuyến, và sau đó bấm "Kết nối tài khoản Google Drive" để đăng nhập và cấp quyền lại.`;
+  } else if (res.status === 403) {
+    if (details.includes('insufficientPermissions') || details.includes('permission')) {
+      finalMessage = `Yêu cầu bị từ chối hoặc thiếu quyền truy cập tệp Google Drive (403 Forbidden).\n\nCách khắc phục:\n- Khi đăng nhập Google bằng cửa sổ popup, hãy chắc chắn tích chọn vào hộp kiểm cho phép ứng dụng: "Xem, tạo và xóa các tệp Google Drive mà bạn đã mở hoặc tạo bằng ứng dụng này" (See, create, and delete Google Drive files you’ve opened or created with this app) trước khi bấm Đồng ý.`;
+    } else {
+      finalMessage = `Lỗi phân quyền từ Google Drive (403 Forbidden): ${details}.\n\nCách khắc phục:\n1. "Ngắt kết nối Google Drive" trong Cài đặt và thực hiện kết nối lại.\n2. Kiểm tra xem tài khoản của bạn có bị quản lý bởi chính sách nội bộ của công ty (Google Workspace Admin) chặn ứng dụng bên thứ ba hay không.`;
+    }
+  } else if (res.status === 404) {
+    finalMessage = `Không thể tìm thấy tài nguyên trên Google Drive (404 Not Found).\n\nCó thể thư mục hoặc tệp này đã bị xóa hoặc di chuyển trên Drive của bạn. Bạn hãy làm mới trang hoặc kết nối lại Google Drive để hệ thống tự động tái cấu trúc thư mục mới.`;
+  }
+
+  return new Error(finalMessage);
+}
+
 // 1. Search or create folder by name
 export async function findOrCreateFolder(name: string, parentId?: string): Promise<string> {
   const token = await getAccessToken();
@@ -116,12 +172,17 @@ export async function findOrCreateFolder(name: string, parentId?: string): Promi
   }
 
   const searchUrl = `${DRIVE_API_URL}?q=${encodeURIComponent(query)}&fields=files(id,name)`;
-  const searchRes = await fetch(searchUrl, {
-    headers: { Authorization: `Bearer ${token}` }
-  });
+  let searchRes: Response;
+  try {
+    searchRes = await fetch(searchUrl, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+  } catch (e: any) {
+    throw new Error(`Không thể kết nối đến máy chủ Google Drive: ${e.message || e}`);
+  }
 
   if (!searchRes.ok) {
-    throw new Error(`Tìm kiếm thư mục thất bại: ${searchRes.statusText}`);
+    throw await parseGoogleApiError(searchRes, 'Tìm kiếm thư mục thất bại');
   }
 
   const searchData = await searchRes.json();
@@ -138,17 +199,22 @@ export async function findOrCreateFolder(name: string, parentId?: string): Promi
     createBody.parents = [parentId];
   }
 
-  const createRes = await fetch(DRIVE_API_URL, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(createBody)
-  });
+  let createRes: Response;
+  try {
+    createRes = await fetch(DRIVE_API_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(createBody)
+    });
+  } catch (e: any) {
+    throw new Error(`Không thể kết nối để khởi tạo thư mục Google Drive: ${e.message || e}`);
+  }
 
   if (!createRes.ok) {
-    throw new Error(`Tạo thư mục thất bại: ${createRes.statusText}`);
+    throw await parseGoogleApiError(createRes, 'Tạo thư mục thất bại');
   }
 
   const createData = await createRes.json();
@@ -174,12 +240,17 @@ export async function listFolderFiles(folderId: string): Promise<DriveFile[]> {
   const query = `'${folderId}' in parents and trashed=false`;
   const url = `${DRIVE_API_URL}?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,size,webViewLink,webContentLink,createdTime)&orderBy=createdTime desc`;
 
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}` }
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+  } catch (e: any) {
+    throw new Error(`Không thể truy cập Google Drive để tải danh sách tệp: ${e.message || e}`);
+  }
 
   if (!res.ok) {
-    throw new Error(`Truy vấn tài liệu thiết bị thất bại: ${res.statusText}`);
+    throw await parseGoogleApiError(res, 'Truy vấn tài liệu thiết bị thất bại');
   }
 
   const data = await res.json();
@@ -201,16 +272,21 @@ export async function uploadFileToFolder(folderId: string, file: File): Promise<
   formData.append('file', file);
 
   const url = `${UPLOAD_API_URL}?uploadType=multipart&fields=id,name,mimeType,size,webViewLink,webContentLink,createdTime`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`
-    },
-    body: formData
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`
+      },
+      body: formData
+    });
+  } catch (e: any) {
+    throw new Error(`Không thể tải tệp lên Google Drive do lỗi kết nối: ${e.message || e}`);
+  }
 
   if (!res.ok) {
-    throw new Error(`Đăng tải tài liệu thất bại: ${res.statusText}`);
+    throw await parseGoogleApiError(res, 'Đăng tải tài liệu thất bại');
   }
 
   return await res.json();
@@ -222,14 +298,19 @@ export async function deleteDriveFile(fileId: string): Promise<void> {
   if (!token) throw new Error('Vui lòng kết nối Google Drive.');
 
   const url = `${DRIVE_API_URL}/${fileId}`;
-  const res = await fetch(url, {
-    method: 'DELETE',
-    headers: {
-      Authorization: `Bearer ${token}`
-    }
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    });
+  } catch (e: any) {
+    throw new Error(`Không thể xóa tệp trên Google Drive do lỗi kết nối: ${e.message || e}`);
+  }
 
   if (!res.ok) {
-    throw new Error(`Xóa tài liệu trên Drive thất bại: ${res.statusText}`);
+    throw await parseGoogleApiError(res, 'Xóa tài liệu trên Drive thất bại');
   }
 }

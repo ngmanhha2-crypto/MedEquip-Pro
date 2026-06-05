@@ -25,8 +25,12 @@ export interface Device {
   manufacturer: string;
   origin: string;
   yearOfProduction: number;
-  expiryGCP: string; // Giấy phép
-  expiryGKD: string; // Kiểm định
+  expiryGCP: string; // Giấy phép (Ngày hết hạn)
+  expiryGKD: string; // Kiểm định (Ngày hết hạn)
+  gcpIssueDate?: string; // Ngày cấp / gia hạn giấy phép gần nhất
+  gcpPeriod?: number; // Thời hạn giấy phép (tháng)
+  gkdIssueDate?: string; // Ngày kiểm định gần nhất
+  gkdPeriod?: number; // Thời hạn kiểm định (tháng)
   lastMaintenance: string;
   maintenancePeriod: number; // Months
   notes?: string;
