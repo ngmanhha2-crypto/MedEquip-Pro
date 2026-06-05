@@ -1,14 +1,14 @@
-import { initializeApp } from 'firebase/app';
+import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User, signOut } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
+// Initialize Firebase safely
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 const auth = getAuth(app);
 
 // Secondary Firebase App and Auth specifically for Google Drive integration
 // to prevent signing out or switching the main email/password user
-const driveApp = initializeApp(firebaseConfig, 'GoogleDriveApp');
+const driveApp = getApps().find(a => a.name === 'GoogleDriveApp') || initializeApp(firebaseConfig, 'GoogleDriveApp');
 export const driveAuth = getAuth(driveApp);
 
 const provider = new GoogleAuthProvider();

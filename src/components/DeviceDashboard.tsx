@@ -280,6 +280,8 @@ const DeviceDashboard: React.FC = () => {
         errorMsg = "Mật khẩu quá yếu (tối thiểu 6 ký tự).";
       } else if (errorMsg.includes("auth/email-already-in-use")) {
         errorMsg = "Email này đã được sử dụng bởi một tài khoản khác.";
+      } else if (errorMsg.includes("auth/operation-not-allowed") || errorMsg.includes("operation-not-allowed")) {
+        errorMsg = "Phương thức đăng nhập bằng Email/Mật khẩu (Email/Password) hiện đang bị tắt trong cấu hình Firebase của dự án.\n\nCách kích hoạt rất dễ dàng:\n\n1️⃣ Bước 1: Hãy truy cập vào trang quản trị Firebase Console bằng đường dẫn dưới đây:\n👉 https://console.firebase.google.com/\n\n2️⃣ Bước 2: Chọn dự án Firebase của bạn, sau đó vào phần \"Build\" -> \"Authentication\" -> chọn tab \"Sign-in method\".\n\n3️⃣ Bước 3: Tìm mục \"Email/Password\" dưới phần \"Sign-in providers\", nhấp vào nút Chỉnh sửa (Edit) và kích hoạt trạng thái \"Bật\" (Enable) rồi bấm Lưu (Save).\n\n4️⃣ Bước 4: Quay lại ứng dụng này, tải lại trang và tiến hành đăng ký/đăng nhập lại tài khoản!";
       }
       alert(`Lỗi xác thực: ${errorMsg}`);
     } finally {

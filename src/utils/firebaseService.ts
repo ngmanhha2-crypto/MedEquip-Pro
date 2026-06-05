@@ -1,4 +1,4 @@
-import { initializeApp } from 'firebase/app';
+import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { 
   getFirestore, 
@@ -15,8 +15,8 @@ import {
 import firebaseConfig from '../../firebase-applet-config.json';
 import { Device, ActivityLog } from '../types';
 
-// Initialize Firebase App
-const app = initializeApp(firebaseConfig);
+// Initialize Firebase App safely
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
 // Initialize Firestore (utilizing custom database ID if available)
 const extendedConfig = firebaseConfig as any;
