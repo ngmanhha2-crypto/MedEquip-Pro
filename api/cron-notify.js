@@ -8,13 +8,9 @@
  * when devices are close to expiring or overdue.
  */
 
-// Initialize Firebase Admin SDK
-let admin;
-try {
-  admin = require('firebase-admin');
-} catch (e) {
-  console.warn("firebase-admin package is not available. Please install it if needed.");
-}
+import admin from 'firebase-admin';
+import fs from 'fs';
+import path from 'path';
 
 // Helper: Calculate remaining days
 function getDaysRemaining(dateStr) {
@@ -50,26 +46,14 @@ function formatDisplayDate(dateStr) {
   return dateStr;
 }
 
-module.exports = async function handler(req, res) {
+export default async function handler(req, res) {
   console.log("=== BAT DAU TIEN TRINH QUET TU DONG CRON JOB ===");
-
-  // Only allow cron triggers in production if desired, but allow GET request for testing/preview
-  const authHeader = req.headers.authorization;
-  const isVercelCron = req.headers['x-vercel-cron'] === 'true' || (authHeader && authHeader.startsWith('Bearer '));
-  const isDryRun = req.query.test === 'true';
 
   // Fallback credentials from Vercel Environment Variables
   const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || process.env.VITE_TELEGRAM_BOT_TOKEN;
   const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || process.env.VITE_TELEGRAM_CHAT_ID;
   const RECIPIENT_EMAIL = process.env.RECIPIENT_EMAIL || process.env.VITE_RECIPIENT_EMAIL;
   const RESEND_API_KEY = process.env.RESEND_API_KEY;
-
-  if (!admin) {
-    return res.status(500).json({
-      success: false,
-      message: "Chưa cài đặt thư viện 'firebase-admin' trên server. Hãy chạy lệnh cài đặt hoặc thêm vào package.json."
-    });
-  }
 
   // Handle Firebase initialization
   if (admin.apps.length === 0) {
@@ -86,7 +70,8 @@ module.exports = async function handler(req, res) {
     } else {
       // Setup default config from json
       try {
-        const config = require('../firebase-applet-config.json');
+        const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
+        const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
         admin.initializeApp({
           projectId: config.projectId
         });
@@ -243,7 +228,7 @@ module.exports = async function handler(req, res) {
       // Build aesthetic HTML email body
       let htmlBody = `
         <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff;">
-          <div style="padding-bottom: 20px; border-b: 1px solid #f1f5f9; text-align: center;">
+          <div style="padding-bottom: 20px; border-bottom: 1px solid #f1f5f9; text-align: center;">
             <h1 style="color: #0f172a; font-size: 20px; margin: 0;">Báo Cáo Tình Trạng Thiết Bị Định Kỳ</h1>
             <p style="color: #64748b; font-size: 14px; margin: 5px 0 0 0;">Ngày kiểm tra: ${todayStr}</p>
           </div>
@@ -308,7 +293,7 @@ module.exports = async function handler(req, res) {
           body: JSON.stringify({
             from: 'MedEquip Manager <onboarding@resend.dev>',
             to: RECIPIENT_EMAIL,
-            subject: `[CĂNH BÁO] Hệ thống MedEquip: Có ${expiredList.length + warningList.length} hồ sơ cần cập nhật!`,
+            subject: `[CẢNH BÁO] Hệ thống MedEquip: Có ${expiredList.length + warningList.length} hồ sơ cần cập nhật!`,
             html: htmlBody
           })
         });
@@ -321,7 +306,7 @@ module.exports = async function handler(req, res) {
           console.error("Loi gui Email tu Resend API:", errText);
         }
       } catch (err) {
-        console.error("Loi tiet hanh gui Email API:", err);
+        console.error("Loi tien hanh gui Email API:", err);
       }
     } else {
       console.log("Chua cau hinh email nguoi nhan hoac RESEND_API_KEY. Bo qua.");
