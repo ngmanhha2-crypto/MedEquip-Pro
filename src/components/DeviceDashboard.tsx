@@ -2628,13 +2628,32 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   onSendTestMessage,
   onSendSummaryReport
 }) => {
-  const [email, setEmail] = useState('');
-  const [isSubscribed, setIsSubscribed] = useState(false);
-  const [channels, setChannels] = useState({
-    expiryGCP: true,
-    expiryGKD: true,
-    maintenance: true
+  const [email, setEmail] = useState(() => {
+    return localStorage.getItem('medequip_saved_recipient_email') || '';
   });
+  const [isSubscribed, setIsSubscribed] = useState(() => {
+    return localStorage.getItem('medequip_saved_is_subscribed') === 'true';
+  });
+  const [channels, setChannels] = useState<{ expiryGCP: boolean; expiryGKD: boolean; maintenance: boolean }>(() => {
+    try {
+      const saved = localStorage.getItem('medequip_saved_notification_channels');
+      return saved ? JSON.parse(saved) : { expiryGCP: true, expiryGKD: true, maintenance: true };
+    } catch {
+      return { expiryGCP: true, expiryGKD: true, maintenance: true };
+    }
+  });
+
+  React.useEffect(() => {
+    localStorage.setItem('medequip_saved_recipient_email', email);
+  }, [email]);
+
+  React.useEffect(() => {
+    localStorage.setItem('medequip_saved_is_subscribed', isSubscribed ? 'true' : 'false');
+  }, [isSubscribed]);
+
+  React.useEffect(() => {
+    localStorage.setItem('medequip_saved_notification_channels', JSON.stringify(channels));
+  }, [channels]);
 
   // Telegram scanner states
   const [scanning, setScanning] = useState(false);
