@@ -131,8 +131,98 @@ const DeviceDashboard: React.FC = () => {
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
   const [isRegisterScreen, setIsRegisterScreen] = useState(false);
-  const [driveFiles, setDriveFiles] = useState<Record<string, DriveFile[]>>({});
-  const [driveFolderIds, setDriveFolderIds] = useState<Record<string, string>>({});
+  const [driveFiles, setDriveFiles] = useState<Record<string, DriveFile[]>>(() => {
+    try {
+      const saved = localStorage.getItem('medequip_saved_drive_files');
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+  const [driveFolderIds, setDriveFolderIds] = useState<Record<string, string>>(() => {
+    try {
+      const saved = localStorage.getItem('medequip_saved_drive_folder_ids');
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  // States/data for automatic documents & folders scanning (lifted up to run once per page load and save locally)
+  const [mockDocs, setMockDocs] = useState<Record<string, LegalDoc[]>>(() => {
+    try {
+      const saved = localStorage.getItem('medequip_saved_mock_docs');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    
+    const initialDocs: Record<string, LegalDoc[]> = {};
+    MOCK_DEVICES.forEach(d => {
+      initialDocs[d.id] = [
+        { id: `${d.id}-gcp`, name: `GiayPhep_GCP_${d.serialNumber}.pdf`, type: 'PDF', uploadDate: '2024-01-10', size: '2.5 MB' },
+        { id: `${d.id}-gkd`, name: `ChungNhan_GKD_${d.serialNumber}.pdf`, type: 'PDF', uploadDate: '2023-11-15', size: '1.8 MB' },
+        { id: `${d.id}-contract`, name: `HopDong_MuaBan_${d.serialNumber}.pdf`, type: 'PDF', uploadDate: '2023-06-01', size: '4.2 MB' }
+      ];
+    });
+    initialDocs['shared-legal-docs-folder'] = [
+      { id: 'shared-1', name: 'NghiDinh_98_2021_ND-CP_QuanLyTrangThietBiYTe.pdf', type: 'PDF', uploadDate: '2021-11-08', size: '3.4 MB' },
+      { id: 'shared-2', name: 'QuyetDinh_1522_QuyCongBoGiaThietBi.pdf', type: 'PDF', uploadDate: '2023-04-12', size: '1.1 MB' },
+      { id: 'shared-3', name: 'ChungChi_KyThuatVien_NguyenVanA.pdf', type: 'PDF', uploadDate: '2024-02-15', size: '1.8 MB' },
+      { id: 'shared-4', name: 'NghiDinh_07_2023_SuaDoiNghiDinh98.pdf', type: 'PDF', uploadDate: '2023-03-03', size: '2.0 MB' },
+    ];
+    return initialDocs;
+  });
+
+  const [scanState, setScanState] = useState<'idle' | 'scanning' | 'completed'>(() => {
+    return (localStorage.getItem('medequip_saved_scan_state') as 'idle' | 'scanning' | 'completed') || 'idle';
+  });
+  const [scanProgress, setScanProgress] = useState(() => {
+    return Number(localStorage.getItem('medequip_saved_scan_progress') || '0');
+  });
+  const [currentScanningName, setCurrentScanningName] = useState(() => {
+    return localStorage.getItem('medequip_saved_scan_current_name') || '';
+  });
+  const [scanResults, setScanResults] = useState<Array<{ id: string; folderName: string; fileCount: number; files: string[] }>>(() => {
+    try {
+      const saved = localStorage.getItem('medequip_saved_scan_results');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [isScanReportVisible, setIsScanReportVisible] = useState(false);
+
+  const [driveError, setDriveError] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    localStorage.setItem('medequip_saved_drive_files', JSON.stringify(driveFiles));
+  }, [driveFiles]);
+
+  React.useEffect(() => {
+    localStorage.setItem('medequip_saved_drive_folder_ids', JSON.stringify(driveFolderIds));
+  }, [driveFolderIds]);
+
+  React.useEffect(() => {
+    localStorage.setItem('medequip_saved_mock_docs', JSON.stringify(mockDocs));
+  }, [mockDocs]);
+
+  React.useEffect(() => {
+    localStorage.setItem('medequip_saved_scan_state', scanState);
+  }, [scanState]);
+
+  React.useEffect(() => {
+    localStorage.setItem('medequip_saved_scan_progress', scanProgress.toString());
+  }, [scanProgress]);
+
+  React.useEffect(() => {
+    localStorage.setItem('medequip_saved_scan_current_name', currentScanningName);
+  }, [currentScanningName]);
+
+  React.useEffect(() => {
+    localStorage.setItem('medequip_saved_scan_results', JSON.stringify(scanResults));
+  }, [scanResults]);
+
+
   const [showAuthDomainError, setShowAuthDomainError] = useState(false);
   const [failedDomain, setFailedDomain] = useState('');
   const [confirmDialog, setConfirmDialog] = useState<{
@@ -522,6 +612,96 @@ const DeviceDashboard: React.FC = () => {
       active = false;
     };
   }, [appUser]);
+
+  // Lifted Automated scan for files and document names in all folders (only once per connection status per page load)
+  const triggerAutoScan = async () => {
+    setScanState('scanning');
+    setScanProgress(0);
+    setCurrentScanningName('Đang khởi tạo danh sách thư mục thiết bị...');
+    const results: Array<{ id: string; folderName: string; fileCount: number; files: string[] }> = [];
+
+    const scanTargets = [
+      { id: 'shared-legal-docs-folder', name: 'Văn bản pháp quy & Chứng chỉ nhân viên' },
+      ...devices.map(d => ({ id: d.id, name: d.name }))
+    ];
+
+    let currentDriveConnected = isDriveConnected;
+
+    for (let i = 0; i < scanTargets.length; i++) {
+      const target = scanTargets[i];
+      setCurrentScanningName(`Đang rà soát thư mục: ${target.name}...`);
+      
+      try {
+        if (currentDriveConnected) {
+          let folderId = driveFolderIds[target.id];
+          if (!folderId) {
+            folderId = await getDeviceFolderId(target.name);
+            setDriveFolderIds(prev => ({ ...prev, [target.id]: folderId }));
+          }
+          const filesFound = await listFolderFiles(folderId);
+          setDriveFiles(prev => ({ ...prev, [target.id]: filesFound }));
+          results.push({
+            id: target.id,
+            folderName: target.name,
+            fileCount: filesFound.length,
+            files: filesFound.map(f => f.name)
+          });
+        } else {
+          // Local simulated
+          const localFiles = mockDocs[target.id] || [];
+          results.push({
+            id: target.id,
+            folderName: target.name,
+            fileCount: localFiles.length,
+            files: localFiles.map(f => f.name)
+          });
+        }
+      } catch (err: any) {
+        console.warn(`Tính năng đồng bộ Google Drive tạm dừng cho thư mục ${target.name}:`, err.message || err);
+        const errorMsg = err.message || String(err);
+        const isUnauthorized = errorMsg.includes('401') || errorMsg.includes('Unauthorized') || errorMsg.includes('exp') || errorMsg.includes('token');
+        const isApiDisabled = errorMsg.includes('chưa được kích hoạt') || errorMsg.includes('403') || errorMsg.includes('Forbidden') || errorMsg.includes('developers.google.com') || errorMsg.includes('disabled') || errorMsg.includes('has not been used');
+        
+        if ((isUnauthorized || isApiDisabled) && currentDriveConnected) {
+          currentDriveConnected = false;
+          setIsDriveConnected(false);
+          setDriveUserEmail(null);
+          logout().catch(console.error);
+          if (isApiDisabled) {
+            setDriveError(errorMsg);
+          } else {
+            setDriveError("Phiên kết nối Google Drive đã hết hạn hoặc bị thu hồi. Hệ thống đã tự động quay lại chế độ ngoại tuyến.");
+          }
+        }
+
+        // Standard local fallback for safe offline simulation
+        const localFiles = mockDocs[target.id] || [];
+        results.push({
+          id: target.id,
+          folderName: target.name,
+          fileCount: localFiles.length,
+          files: localFiles.map(f => f.name)
+        });
+      }
+      
+      await new Promise(resolve => setTimeout(resolve, 150));
+      setScanProgress(Math.round(((i + 1) / scanTargets.length) * 100));
+    }
+    
+    setScanResults(results);
+    setScanState('completed');
+    setCurrentScanningName('Quét tự động hoàn tất thành công!');
+  };
+
+  const hasScannedRef = React.useRef<Record<string, boolean>>({});
+
+  React.useEffect(() => {
+    const currentStateKey = String(isDriveConnected);
+    if (!hasScannedRef.current[currentStateKey]) {
+      triggerAutoScan();
+      hasScannedRef.current[currentStateKey] = true;
+    }
+  }, [isDriveConnected]);
 
   const filteredDevices = useMemo(() => {
     return devices.filter(d => {
@@ -1320,7 +1500,11 @@ const DeviceDashboard: React.FC = () => {
               </div>
             </>
           ) : activeTab === 'maintenance' ? (
-            <MaintenanceSchedule devices={devices} warningDaysBD={warningDaysBD} />
+            <MaintenanceSchedule 
+              devices={devices} 
+              warningDaysBD={warningDaysBD} 
+              activityLogs={activityLogs}
+            />
           ) : activeTab === 'settings' ? (
             <SettingsPanel 
               isDriveConnected={isDriveConnected}
@@ -1354,7 +1538,9 @@ const DeviceDashboard: React.FC = () => {
             <LegalDocumentsPanel 
               devices={devices} 
               isDriveConnected={isDriveConnected}
+              setIsDriveConnected={setIsDriveConnected}
               driveUserEmail={driveUserEmail}
+              setDriveUserEmail={setDriveUserEmail}
               driveFiles={driveFiles}
               setDriveFiles={setDriveFiles}
               driveFolderIds={driveFolderIds}
@@ -1377,6 +1563,21 @@ const DeviceDashboard: React.FC = () => {
                   await saveActivityLogToFirestore(auth.currentUser.uid, newAutoLog);
                 }
               }}
+              scanState={scanState}
+              setScanState={setScanState}
+              scanProgress={scanProgress}
+              setScanProgress={setScanProgress}
+              currentScanningName={currentScanningName}
+              setCurrentScanningName={setCurrentScanningName}
+              scanResults={scanResults}
+              setScanResults={setScanResults}
+              isScanReportVisible={isScanReportVisible}
+              setIsScanReportVisible={setIsScanReportVisible}
+              driveError={driveError}
+              setDriveError={setDriveError}
+              mockDocs={mockDocs}
+              setMockDocs={setMockDocs}
+              triggerAutoScan={triggerAutoScan}
             />
           )}
         </div>
@@ -2264,40 +2465,139 @@ const DeviceRowV2 = ({ device, onConfirm, onDelete, onEdit, onShowHistory, onSho
   );
 };
 
-const MaintenanceSchedule = ({ devices, warningDaysBD = 30 }: { devices: Device[], warningDaysBD: number }) => {
+const MaintenanceSchedule = ({ 
+  devices, 
+  warningDaysBD = 30,
+  activityLogs = []
+}: { 
+  devices: Device[], 
+  warningDaysBD: number,
+  activityLogs?: ActivityLog[]
+}) => {
+  const [expandedDevices, setExpandedDevices] = useState<Record<string, boolean>>({});
+
+  const toggleExpand = (id: string) => {
+    setExpandedDevices(prev => ({
+      ...prev,
+      [id]: !prev[id]
+    }));
+  };
+
   return (
     <div className="flex-1 bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
       <div className="p-6 border-b border-slate-100 bg-slate-50/30">
         <h3 className="text-lg font-bold text-slate-800">Lịch trình bảo trì định kỳ</h3>
-        <p className="text-xs text-slate-500">Danh sách các thiết bị cần bảo trì trong các tháng tới</p>
+        <p className="text-xs text-slate-500">Danh sách các thiết bị cần bảo trì trong các tháng tới (Nhấn vào thẻ thiết bị để xem dòng thời gian lịch sử)</p>
       </div>
       <div className="flex-1 overflow-auto p-6 space-y-4">
         {devices.map(device => {
           const lastDate = parseISO(device.lastMaintenance);
           const nextDate = addMonths(lastDate, device.maintenancePeriod);
           const daysToMaintenance = differenceInDays(nextDate, new Date());
+          const isExpanded = !!expandedDevices[device.id];
+
+          const thisLogs = activityLogs
+            .filter(log => log.deviceId === device.id)
+            .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
           
           return (
-            <div key={device.id} className="group flex items-center justify-between p-4 rounded-xl border border-slate-100 hover:border-blue-200 transition-all hover:shadow-md">
-              <div className="flex items-center gap-4">
-                <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${daysToMaintenance < 7 ? 'bg-red-50 text-red-600' : 'bg-slate-50 text-slate-400'}`}>
-                  <Clock size={24} />
-                </div>
-                <div>
-                  <div className="font-bold text-slate-800">{device.name}</div>
-                  <div className="text-xs text-slate-500 uppercase font-mono tracking-tighter">
-                    Model: {device.model} | Chu kỳ: {device.maintenancePeriod} tháng
+            <div 
+              key={device.id} 
+              className={`flex flex-col rounded-xl border transition-all duration-200 bg-white overflow-hidden ${
+                isExpanded 
+                  ? 'border-blue-200 shadow-md ring-1 ring-blue-100' 
+                  : 'border-slate-100 hover:border-blue-200 hover:shadow-md'
+              }`}
+            >
+              {/* Card Header Trigger */}
+              <div 
+                onClick={() => toggleExpand(device.id)}
+                className="flex items-center justify-between p-4 cursor-pointer select-none"
+              >
+                <div className="flex items-center gap-4">
+                  <div className={`w-12 h-12 rounded-lg flex items-center justify-center transition-colors ${
+                    daysToMaintenance < 7 ? 'bg-red-50 text-red-600' : 'bg-slate-50 text-slate-400'
+                  }`}>
+                    <Clock size={24} />
+                  </div>
+                  <div>
+                    <div className="font-bold text-slate-800">{device.name}</div>
+                    <div className="text-xs text-slate-500 uppercase font-mono tracking-tighter">
+                      Model: {device.model} | Chu kỳ: {device.maintenancePeriod} tháng
+                    </div>
                   </div>
                 </div>
-              </div>
-              <div className="text-right">
-                <div className={`text-sm font-bold ${daysToMaintenance < 0 ? 'text-red-600' : daysToMaintenance < warningDaysBD ? 'text-orange-500' : 'text-slate-600'}`}>
-                  Kiến nghị: {format(nextDate, 'dd/MM/yyyy')}
+                <div className="flex items-center gap-4">
+                  <div className="text-right">
+                    <div className={`text-sm font-bold ${
+                      daysToMaintenance < 0 
+                        ? 'text-red-600' 
+                        : daysToMaintenance < warningDaysBD 
+                        ? 'text-orange-500' 
+                        : 'text-slate-600'
+                    }`}>
+                      Kiến nghị: {format(nextDate, 'dd/MM/yyyy')}
+                    </div>
+                    <div className="text-[10px] text-slate-400 italic">
+                      {daysToMaintenance < 0 ? `Đã quá hạn ${Math.abs(daysToMaintenance)} ngày` : `Còn lại ${daysToMaintenance} ngày`}
+                    </div>
+                  </div>
+                  <ChevronRight 
+                    size={16} 
+                    className={`text-slate-400 transition-transform duration-200 ${
+                      isExpanded ? 'rotate-90 text-blue-600' : ''
+                    }`} 
+                  />
                 </div>
-                <div className="text-[10px] text-slate-400 italic">
-                  {daysToMaintenance < 0 ? `Đã quá hạn ${Math.abs(daysToMaintenance)} ngày` : `Còn lại ${daysToMaintenance} ngày`}
-                </div>
               </div>
+
+              {/* Card Collapsible Timeline Area */}
+              <AnimatePresence initial={false}>
+                {isExpanded && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.2 }}
+                    className="overflow-hidden"
+                  >
+                    {thisLogs.length > 0 ? (
+                      <div className="px-6 pb-6 pt-2 border-t border-slate-100 bg-slate-50/20">
+                        <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2">
+                          <History size={12} className="text-blue-500" />
+                          <span>Dòng thời gian lịch sử hoạt động ({thisLogs.length})</span>
+                        </div>
+                        <div className="relative pl-5 border-l border-slate-200 space-y-4 ml-2">
+                          {thisLogs.map(log => (
+                            <div key={log.id} className="relative text-xs">
+                              {/* Bullet node */}
+                              <span className="absolute -left-[24px] top-1 flex h-2 w-2 items-center justify-center rounded-full bg-blue-500 ring-4 ring-white" />
+                              <div className="flex items-center gap-2 text-slate-400 font-medium">
+                                <span className="font-bold text-slate-500">{formatDisplayDate(log.date)}</span>
+                                <span className="px-1.5 py-0.5 text-[9px] font-extrabold uppercase rounded border bg-blue-50 text-blue-700 border-blue-200/50">
+                                  {log.categoryLabel || 'Sự kiện'}
+                                </span>
+                                <span className="text-slate-450 text-[11px]">bởi {log.user}</span>
+                              </div>
+                              <p className="mt-1 font-semibold text-slate-700 leading-relaxed">{log.description}</p>
+                              {log.notes && (
+                                <p className="mt-0.5 text-slate-400 italic leading-snug font-medium bg-slate-50 p-2 rounded-lg border border-slate-100/50">
+                                  {log.notes}
+                                </p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="px-6 pb-6 pt-4 border-t border-slate-100 bg-slate-50/20 text-center py-6 text-slate-400">
+                        <History size={20} className="mx-auto mb-1.5 opacity-30" />
+                        <p className="text-xs font-semibold">Chưa ghi nhận lịch sử bảo dưỡng nào cho thiết bị này.</p>
+                      </div>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           );
         })}
@@ -3075,18 +3375,37 @@ interface LegalDoc {
 const LegalDocumentsPanel = ({ 
   devices, 
   isDriveConnected,
+  setIsDriveConnected,
   driveUserEmail,
+  setDriveUserEmail,
   driveFiles,
   setDriveFiles,
   driveFolderIds,
   setDriveFolderIds,
   setActiveTab,
   onActionLog,
-  askConfirmation
+  askConfirmation,
+  scanState,
+  setScanState,
+  scanProgress,
+  setScanProgress,
+  currentScanningName,
+  setCurrentScanningName,
+  scanResults,
+  setScanResults,
+  isScanReportVisible,
+  setIsScanReportVisible,
+  driveError,
+  setDriveError,
+  mockDocs,
+  setMockDocs,
+  triggerAutoScan,
 }: { 
   devices: Device[]; 
   isDriveConnected: boolean;
+  setIsDriveConnected: React.Dispatch<React.SetStateAction<boolean>>;
   driveUserEmail: string | null;
+  setDriveUserEmail: React.Dispatch<React.SetStateAction<string | null>>;
   driveFiles: Record<string, DriveFile[]>;
   setDriveFiles: React.Dispatch<React.SetStateAction<Record<string, DriveFile[]>>>;
   driveFolderIds: Record<string, string>;
@@ -3094,32 +3413,26 @@ const LegalDocumentsPanel = ({
   setActiveTab: (tab: 'inventory' | 'maintenance' | 'legal' | 'settings') => void;
   onActionLog?: (deviceId: string, text: string, type: 'UPLOAD' | 'DELETE') => void; 
   askConfirmation?: (title: string, message: string, onConfirm: () => void, variant?: 'danger' | 'warning' | 'info', confirmText?: string) => void;
+  scanState: 'idle' | 'scanning' | 'completed';
+  setScanState: React.Dispatch<React.SetStateAction<'idle' | 'scanning' | 'completed'>>;
+  scanProgress: number;
+  setScanProgress: React.Dispatch<React.SetStateAction<number>>;
+  currentScanningName: string;
+  setCurrentScanningName: React.Dispatch<React.SetStateAction<string>>;
+  scanResults: Array<{ id: string; folderName: string; fileCount: number; files: string[] }>;
+  setScanResults: React.Dispatch<React.SetStateAction<Array<{ id: string; folderName: string; fileCount: number; files: string[] }>>>;
+  isScanReportVisible: boolean;
+  setIsScanReportVisible: React.Dispatch<React.SetStateAction<boolean>>;
+  driveError: string | null;
+  setDriveError: React.Dispatch<React.SetStateAction<string | null>>;
+  mockDocs: Record<string, LegalDoc[]>;
+  setMockDocs: React.Dispatch<React.SetStateAction<Record<string, LegalDoc[]>>>;
+  triggerAutoScan: () => Promise<void>;
 }) => {
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   
-  // Local simulated offline files
-  const [mockDocs, setMockDocs] = useState<Record<string, LegalDoc[]>>(() => {
-    const initialDocs: Record<string, LegalDoc[]> = {};
-    devices.forEach(d => {
-      initialDocs[d.id] = [
-        { id: '1', name: 'Giay_Phep_Nhap_Khau.pdf', type: 'PDF', uploadDate: '2024-01-20', size: '1.2 MB' },
-        { id: '2', name: 'Ket_Qua_Kiem_Dinh_2023.pdf', type: 'PDF', uploadDate: '2023-11-15', size: '0.8 MB' },
-        { id: '3', name: 'Huong_Dan_Su_Dung.docx', type: 'DOCX', uploadDate: '2023-10-05', size: '2.5 MB' },
-      ];
-    });
-    // Thêm thư mục lưu trữ tài liệu chung, văn bản pháp quy, chứng chỉ nhân viên
-    initialDocs['shared-legal-docs-folder'] = [
-      { id: 'shared-1', name: 'NghiDinh_98_2021_ND-CP_QuanLyTrangThietBiYTe.pdf', type: 'PDF', uploadDate: '2021-11-08', size: '3.4 MB' },
-      { id: 'shared-2', name: 'QuyetDinh_1522_QuyCongBoGiaThietBi.pdf', type: 'PDF', uploadDate: '2023-04-12', size: '1.1 MB' },
-      { id: 'shared-3', name: 'ChungChi_KyThuatVien_NguyenVanA.pdf', type: 'PDF', uploadDate: '2024-02-15', size: '1.8 MB' },
-      { id: 'shared-4', name: 'NghiDinh_07_2023_SuaDoiNghiDinh98.pdf', type: 'PDF', uploadDate: '2023-03-03', size: '2.0 MB' },
-    ];
-    return initialDocs;
-  });
-
   const [loadingDrive, setLoadingDrive] = useState(false);
-  const [driveError, setDriveError] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
 
@@ -3158,7 +3471,21 @@ const LegalDocumentsPanel = ({
           setDriveError(null);
         } catch (err: any) {
           console.error(err);
-          setDriveError(err.message || String(err));
+          const errorMsg = err.message || String(err);
+          const isUnauthorized = errorMsg.includes('401') || errorMsg.includes('Unauthorized') || errorMsg.includes('exp') || errorMsg.includes('token');
+          const isApiDisabled = errorMsg.includes('chưa được kích hoạt') || errorMsg.includes('403') || errorMsg.includes('Forbidden') || errorMsg.includes('developers.google.com') || errorMsg.includes('disabled') || errorMsg.includes('has not been used');
+          if (isUnauthorized || isApiDisabled) {
+            setIsDriveConnected(false);
+            setDriveUserEmail(null);
+            logout().catch(console.error);
+            if (isApiDisabled) {
+              setDriveError(errorMsg);
+            } else {
+              setDriveError("Phiên kết nối Google Drive đã hết hạn hoặc bị thu hồi. Hệ thống đã tự động quay lại chế độ ngoại tuyến.");
+            }
+          } else {
+            setDriveError(err.message || String(err));
+          }
         } finally {
           setLoadingDrive(false);
         }
@@ -3192,7 +3519,22 @@ const LegalDocumentsPanel = ({
           onActionLog(selectedDeviceId, `Tải lên Google Drive tài liệu: "${file.name}"`, 'UPLOAD');
         }
       } catch (err: any) {
-        alert(`Bảo tải tệp lên Google Drive thất bại: ${err.message || err}`);
+        const errorMsg = err.message || String(err);
+        const isUnauthorized = errorMsg.includes('401') || errorMsg.includes('Unauthorized') || errorMsg.includes('exp') || errorMsg.includes('token');
+        const isApiDisabled = errorMsg.includes('chưa được kích hoạt') || errorMsg.includes('403') || errorMsg.includes('Forbidden') || errorMsg.includes('developers.google.com') || errorMsg.includes('disabled') || errorMsg.includes('has not been used');
+        if (isUnauthorized || isApiDisabled) {
+          setIsDriveConnected(false);
+          setDriveUserEmail(null);
+          logout().catch(console.error);
+          if (isApiDisabled) {
+            setDriveError(errorMsg);
+            alert("Dịch vụ Google Drive API chưa được kích hoạt. Hệ thống đã chuyển về chế độ ngoại tuyến và hiển thị hướng dẫn kích hoạt trong Cài đặt.");
+          } else {
+            alert("Phiên kết nối Google Drive đã hết hạn hoặc bị thu hồi. Hệ thống đã tự động quay lại chế độ ngoại tuyến.");
+          }
+        } else {
+          alert(`Tải tệp lên Google Drive thất bại: ${err.message || err}`);
+        }
       } finally {
         setLoadingDrive(false);
       }
@@ -3270,7 +3612,22 @@ const LegalDocumentsPanel = ({
             onActionLog(selectedDeviceId, `Xóa tài liệu trên Google Drive: "${fileName}"`, 'DELETE');
           }
         } catch (err: any) {
-          alert(`Xóa tệp thất bại: ${err.message || err}`);
+          const errorMsg = err.message || String(err);
+          const isUnauthorized = errorMsg.includes('401') || errorMsg.includes('Unauthorized') || errorMsg.includes('exp') || errorMsg.includes('token');
+          const isApiDisabled = errorMsg.includes('chưa được kích hoạt') || errorMsg.includes('403') || errorMsg.includes('Forbidden') || errorMsg.includes('developers.google.com') || errorMsg.includes('disabled') || errorMsg.includes('has not been used');
+          if (isUnauthorized || isApiDisabled) {
+            setIsDriveConnected(false);
+            setDriveUserEmail(null);
+            logout().catch(console.error);
+            if (isApiDisabled) {
+              setDriveError(errorMsg);
+              alert("Dịch vụ Google Drive API chưa được kích hoạt. Hệ thống đã chuyển về chế độ ngoại tuyến và hiển thị hướng dẫn kích hoạt trong Cài đặt.");
+            } else {
+              alert("Phiên kết nối Google Drive đã hết hạn hoặc bị thu hồi. Hệ thống đã tự động quay lại chế độ ngoại tuyến.");
+            }
+          } else {
+            alert(`Xóa tệp thất bại: ${err.message || err}`);
+          }
         } finally {
           setLoadingDrive(false);
         }
@@ -3437,7 +3794,7 @@ const LegalDocumentsPanel = ({
             <Loader2 size={40} className="text-blue-600 animate-spin mb-4" />
             <p className="text-sm font-medium">Đang tải tài liệu từ Google Drive của bạn...</p>
           </div>
-        ) : driveError ? (
+        ) : (selectedDeviceId && driveError) ? (
           <div className="mx-auto max-w-2xl bg-amber-50/60 border border-amber-200 rounded-3xl p-8 space-y-4 shadow-sm animate-fade-in my-6">
             <div className="flex items-start gap-4">
               <div className="p-3 bg-amber-100 text-amber-850 rounded-2xl shrink-0">
@@ -3498,46 +3855,185 @@ const LegalDocumentsPanel = ({
             </div>
           </div>
         ) : !selectedDeviceId ? (
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-            {/* Thư mục tài liệu chung / Văn bản pháp lý & Chứng chỉ nhân viên */}
-            {(() => {
-              const count = isDriveConnected 
-                ? (driveFiles['shared-legal-docs-folder']?.length || 0)
-                : (mockDocs['shared-legal-docs-folder']?.length || 0);
-
-              return (
-                <button 
-                  onClick={() => setSelectedDeviceId('shared-legal-docs-folder')}
-                  className="group flex flex-col items-center p-6 rounded-3xl border border-amber-150 bg-amber-50/10 hover:border-amber-300 hover:bg-amber-50/40 transition-all cursor-pointer text-left w-full shadow-sm"
-                >
-                  <div className="w-16 h-16 bg-amber-100 text-amber-600 rounded-2xl flex items-center justify-center mb-4 shadow-xs group-hover:scale-110 transition-transform">
-                    <Folder size={32} fill="currentColor" fillOpacity={0.3} />
+          <div className="space-y-6">
+            {driveError && (
+              <div className="bg-amber-50/65 border border-amber-200 rounded-3xl p-6 shadow-sm animate-fade-in">
+                <div className="flex items-start gap-4">
+                  <div className="p-3 bg-amber-100 text-amber-850 rounded-2xl shrink-0 mt-0.5">
+                    <AlertCircle size={24} />
                   </div>
-                  <div className="text-sm font-bold text-slate-800 text-center line-clamp-2 w-full">Văn bản & Chứng chỉ chung</div>
-                  <div className="text-[10px] text-amber-705 mt-1.5 uppercase font-bold tracking-wider">{count} tài liệu</div>
-                </button>
-              );
-            })()}
-
-            {devices.map(device => {
-              const count = isDriveConnected 
-                ? (driveFiles[device.id]?.length || 0)
-                : (mockDocs[device.id]?.length || 0);
-
-              return (
-                <button 
-                  key={device.id}
-                  onClick={() => setSelectedDeviceId(device.id)}
-                  className="group flex flex-col items-center p-6 rounded-3xl border border-slate-100 hover:border-blue-200 hover:bg-blue-50/30 transition-all cursor-pointer text-left w-full shadow-sm"
-                >
-                  <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-2xl flex items-center justify-center mb-4 shadow-xs group-hover:scale-110 transition-transform">
-                    <Folder size={32} fill="currentColor" fillOpacity={0.2} />
+                  <div className="space-y-1.5 flex-1 min-w-0">
+                    <h4 className="font-bold text-slate-800 text-sm">Trạng thái đồng bộ Google Drive</h4>
+                    <div className="text-xs text-slate-650 font-sans whitespace-pre-wrap leading-relaxed break-words">
+                      {(() => {
+                        const urlRegex = /(https?:\/\/[^\s]+)/g;
+                        const parts = driveError.split(urlRegex);
+                        return parts.map((part, idx) => {
+                          if (part.match(urlRegex)) {
+                            return (
+                              <a
+                                key={idx}
+                                href={part}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-blue-600 hover:text-blue-800 underline font-extrabold bg-sky-50 px-2 py-0.5 rounded inline-block my-0.5 break-all transition-colors hover:bg-sky-100"
+                              >
+                                {part}
+                              </a>
+                            );
+                          }
+                          return part;
+                        });
+                      })()}
+                    </div>
                   </div>
-                  <div className="text-sm font-bold text-slate-800 text-center line-clamp-2 w-full">{device.name}</div>
-                  <div className="text-[10px] text-slate-400 mt-1.5 uppercase font-semibold">{count} tài liệu</div>
-                </button>
-              );
-            })}
+                  <button 
+                    onClick={() => setDriveError(null)} 
+                    className="text-slate-400 hover:text-slate-600 p-2 rounded-xl transition-colors cursor-pointer text-sm font-bold shrink-0 self-start"
+                    title="Đóng thông báo"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Automatic Document & Structure Scanner Panel */}
+            <div className="bg-slate-50 border border-slate-200 rounded-3xl p-6 shadow-xs relative overflow-hidden">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
+                <div className="flex items-center gap-3">
+                  <div className={`p-2 rounded-xl transition-all ${scanState === 'scanning' ? 'bg-blue-105 text-blue-600 animate-pulse animate-spin' : 'bg-green-105 text-green-600'}`}>
+                    <RefreshCw size={22} className={scanState === 'scanning' ? 'animate-spin' : ''} />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-slate-800 text-sm flex items-center gap-2">
+                      Quét & Đồng bộ hóa Tài liệu Hệ thống
+                      {scanState === 'scanning' && <span className="text-[10px] bg-blue-150 text-blue-800 font-bold px-2 py-0.5 rounded-full animate-pulse font-sans">ĐANG QUÉT TỰ ĐỘNG...</span>}
+                      {scanState === 'completed' && <span className="text-[10px] bg-green-150 text-green-800 font-bold px-2 py-0.5 rounded-full font-sans">ĐÃ HOÀN THÀNH</span>}
+                    </h4>
+                    <p className="text-xs text-slate-500 font-sans mt-0.5">
+                      Tự động rà soát, kiểm tra số lượng và danh sách tên tài liệu hiện có trong toàn bộ các thư mục.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 self-start md:self-auto shrink-0">
+                  <button
+                    onClick={() => setIsScanReportVisible(!isScanReportVisible)}
+                    className="px-3 py-1.5 rounded-xl border border-slate-200 bg-white text-slate-605 hover:text-slate-800 font-semibold text-xs font-sans transition-all cursor-pointer flex items-center gap-1.5"
+                  >
+                    {isScanReportVisible ? 'Ẩn báo cáo quét' : 'Mở chi tiết báo cáo quét'}
+                  </button>
+                  <button
+                    disabled={scanState === 'scanning'}
+                    onClick={triggerAutoScan}
+                    className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs font-sans transition-all cursor-pointer flex items-center gap-1.5 shadow-xs disabled:opacity-50"
+                  >
+                    <RefreshCw size={12} className={scanState === 'scanning' ? 'animate-spin' : ''} />
+                    Quét lại
+                  </button>
+                </div>
+              </div>
+
+              {scanState === 'scanning' && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between text-xs text-slate-600 font-mono">
+                    <span className="font-sans text-slate-500 font-medium animate-pulse">{currentScanningName}</span>
+                    <strong className="text-blue-600">{scanProgress}%</strong>
+                  </div>
+                  <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
+                    <div 
+                      className="bg-blue-600 h-full rounded-full transition-all duration-350"
+                      style={{ width: `${scanProgress}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {scanState === 'completed' && isScanReportVisible && (
+                <div className="mt-4 border-t border-slate-150 pt-4 animate-fade-in">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {scanResults.map((result, idx) => (
+                      <div key={result.id || idx} className="bg-white border border-slate-100 rounded-2xl p-4 shadow-2xs hover:border-slate-350 transition-colors">
+                        <div className="flex items-center justify-between mb-2 pb-1.5 border-b border-slate-50">
+                          <span className="text-xs font-extrabold text-slate-700 truncate max-w-[70%]" title={result.folderName}>
+                            📁 {result.folderName}
+                          </span>
+                          <span className="px-2 py-0.5 rounded-md font-mono text-[10px] bg-slate-100 text-slate-700 font-bold">
+                            {result.fileCount} tệp
+                          </span>
+                        </div>
+                        {result.files.length > 0 ? (
+                          <ul className="space-y-1.5 max-h-[85px] overflow-y-auto pr-1">
+                            {result.files.map((filename, fIdx) => (
+                              <li key={fIdx} className="text-[11px] text-slate-600 flex items-start gap-1 font-sans break-all select-all leading-normal hover:bg-slate-50 p-0.5 rounded cursor-help" title={filename}>
+                                <FileText size={11} className="text-slate-400 shrink-0 mt-0.5" />
+                                <span className="line-clamp-2">{filename}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <div className="text-[10px] text-slate-400 italic py-1 font-sans">
+                            Chưa có tài liệu nào trong thư mục này
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  
+                  <div className="mt-4 bg-green-50 border border-green-100 rounded-2xl p-3.5 flex items-center justify-between text-xs text-green-850 font-sans">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 size={16} className="text-green-500 shrink-0" />
+                      <span>
+                        Hệ thống đã quét toàn diện: <strong>{scanResults.length} nhóm thư mục</strong>. Phát hiện tổng cộng <strong>{scanResults.reduce((acc, r) => acc + r.fileCount, 0)} tài liệu</strong> kiểm định, hồ sơ pháp lý và tài liệu hướng dẫn sử dụng.
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+              {/* Thư mục tài liệu chung / Văn bản pháp lý & Chứng chỉ nhân viên */}
+              {(() => {
+                const count = isDriveConnected 
+                  ? (driveFiles['shared-legal-docs-folder']?.length || 0)
+                  : (mockDocs['shared-legal-docs-folder']?.length || 0);
+
+                return (
+                  <button 
+                    onClick={() => setSelectedDeviceId('shared-legal-docs-folder')}
+                    className="group flex flex-col items-center p-6 rounded-3xl border border-amber-150 bg-amber-50/10 hover:border-amber-300 hover:bg-amber-50/40 transition-all cursor-pointer text-left w-full shadow-sm"
+                  >
+                    <div className="w-16 h-16 bg-amber-100 text-amber-600 rounded-2xl flex items-center justify-center mb-4 shadow-xs group-hover:scale-110 transition-transform">
+                      <Folder size={32} fill="currentColor" fillOpacity={0.3} />
+                    </div>
+                    <div className="text-sm font-bold text-slate-800 text-center line-clamp-2 w-full">Văn bản & Chứng chỉ chung</div>
+                    <div className="text-[10px] text-amber-705 mt-1.5 uppercase font-bold tracking-wider">{count} tài liệu</div>
+                  </button>
+                );
+              })()}
+
+              {devices.map(device => {
+                const count = isDriveConnected 
+                  ? (driveFiles[device.id]?.length || 0)
+                  : (mockDocs[device.id]?.length || 0);
+
+                return (
+                  <button 
+                    key={device.id}
+                    onClick={() => setSelectedDeviceId(device.id)}
+                    className="group flex flex-col items-center p-6 rounded-3xl border border-slate-100 hover:border-blue-200 hover:bg-blue-50/30 transition-all cursor-pointer text-left w-full shadow-sm"
+                  >
+                    <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-2xl flex items-center justify-center mb-4 shadow-xs group-hover:scale-110 transition-transform">
+                      <Folder size={32} fill="currentColor" fillOpacity={0.2} />
+                    </div>
+                    <div className="text-sm font-bold text-slate-800 text-center line-clamp-2 w-full">{device.name}</div>
+                    <div className="text-[10px] text-slate-400 mt-1.5 uppercase font-semibold">{count} tài liệu</div>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         ) : (
           <div className="space-y-4">
