@@ -74,6 +74,22 @@ import {
 const DeviceDashboard: React.FC = () => {
   const [devices, setDevices] = useState<Device[]>(MOCK_DEVICES);
   const [searchTerm, setSearchTerm] = useState('');
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
+
+  const matchingSuggestions = useMemo(() => {
+    const term = searchTerm.toLowerCase().trim();
+    if (!term) return [];
+    return devices.filter(d => {
+      return (
+        (d.name || '').toLowerCase().includes(term) ||
+        (d.model || '').toLowerCase().includes(term) ||
+        (d.serialNumber || '').toLowerCase().includes(term) ||
+        (d.manufacturer || '').toLowerCase().includes(term) ||
+        (d.origin || '').toLowerCase().includes(term)
+      );
+    }).slice(0, 8);
+  }, [devices, searchTerm]);
+
   const [filterStatus, setFilterStatus] = useState<'all' | 'expired' | 'warning' | 'ok'>('all');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingDevice, setEditingDevice] = useState<Device | null>(null);
@@ -722,8 +738,13 @@ const DeviceDashboard: React.FC = () => {
     return devices.filter(d => {
       const gkdDays = getDaysRemaining(d.expiryGKD);
       const gcpDays = getDaysRemaining(d.expiryGCP);
-      const isSearchMatch = d.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                           d.serialNumber.toLowerCase().includes(searchTerm.toLowerCase());
+      const term = searchTerm.toLowerCase().trim();
+      const isSearchMatch = 
+        (d.name || '').toLowerCase().includes(term) || 
+        (d.model || '').toLowerCase().includes(term) || 
+        (d.serialNumber || '').toLowerCase().includes(term) || 
+        (d.manufacturer || '').toLowerCase().includes(term) || 
+        (d.origin || '').toLowerCase().includes(term);
       
       if (filterStatus === 'all') return isSearchMatch;
       
@@ -1356,11 +1377,58 @@ const DeviceDashboard: React.FC = () => {
               </span>
               <input 
                 type="text" 
-                placeholder="Tìm kiếm thiết bị..." 
-                className="pl-10 pr-4 py-2 bg-slate-100 border-none rounded-lg text-sm w-80 focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                placeholder="Tìm kiếm thiết bị (tên, model, hãng...)" 
+                className="pl-10 pr-4 py-2 bg-slate-100 border-none rounded-lg text-sm w-96 focus:ring-2 focus:ring-blue-500 outline-none transition-all placeholder:text-slate-400"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
+                onFocus={() => setIsSearchFocused(true)}
+                onBlur={() => setTimeout(() => setIsSearchFocused(false), 200)}
               />
+              {isSearchFocused && matchingSuggestions.length > 0 && (
+                <div className="absolute left-0 mt-2 w-[480px] max-h-96 overflow-y-auto bg-white border border-slate-200/80 rounded-2xl shadow-2xl z-50 p-3 divide-y divide-slate-100 animate-in fade-in slide-in-from-top-2 duration-150">
+                  <div className="px-3 py-1.5 text-slate-400 text-[10px] font-bold uppercase tracking-wider">
+                    Gợi ý thiết bị phù hợp ({matchingSuggestions.length})
+                  </div>
+                  <div className="pt-2 space-y-0.5">
+                    {matchingSuggestions.map((device) => (
+                      <button
+                        key={device.id}
+                        type="button"
+                        onMouseDown={() => {
+                          setEditingDevice(device);
+                          setIsModalOpen(true);
+                          setSearchTerm('');
+                        }}
+                        className="w-full text-left p-2.5 hover:bg-slate-50 rounded-xl transition-all flex flex-col gap-1 cursor-pointer focus:bg-slate-50 outline-none group"
+                      >
+                        <div className="flex items-center justify-between w-full">
+                          <span className="font-bold text-slate-800 text-sm group-hover:text-blue-600 transition-colors leading-snug">
+                            {device.name}
+                          </span>
+                          <span className="text-[9px] font-mono bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-bold uppercase shrink-0 ml-2">
+                            S/N: {device.serialNumber || 'N/A'}
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-x-1.5 text-[11px] text-slate-500 leading-none">
+                          <span>Model: <strong className="text-slate-700 font-medium font-sans">{device.model || 'Chưa rõ'}</strong></span>
+                          {device.manufacturer && (
+                            <>
+                              <span className="text-slate-300">•</span>
+                              <span>Hãng: <strong className="text-slate-700 font-medium font-sans">{device.manufacturer}</strong></span>
+                            </>
+                          )}
+                          {device.origin && (
+                            <>
+                              <span className="text-slate-300">•</span>
+                              <span>Xuất xứ: <strong className="text-slate-600 font-medium font-sans">{device.origin}</strong></span>
+                            </>
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-3">
