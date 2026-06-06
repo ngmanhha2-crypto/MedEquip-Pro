@@ -85,7 +85,8 @@ const DeviceDashboard: React.FC = () => {
         (d.model || '').toLowerCase().includes(term) ||
         (d.serialNumber || '').toLowerCase().includes(term) ||
         (d.manufacturer || '').toLowerCase().includes(term) ||
-        (d.origin || '').toLowerCase().includes(term)
+        (d.origin || '').toLowerCase().includes(term) ||
+        (d.manager || '').toLowerCase().includes(term)
       );
     }).slice(0, 8);
   }, [devices, searchTerm]);
@@ -744,7 +745,8 @@ const DeviceDashboard: React.FC = () => {
         (d.model || '').toLowerCase().includes(term) || 
         (d.serialNumber || '').toLowerCase().includes(term) || 
         (d.manufacturer || '').toLowerCase().includes(term) || 
-        (d.origin || '').toLowerCase().includes(term);
+        (d.origin || '').toLowerCase().includes(term) ||
+        (d.manager || '').toLowerCase().includes(term);
       
       if (filterStatus === 'all') return isSearchMatch;
       
@@ -1968,22 +1970,26 @@ const UnauthorizedDomainModal: React.FC<UnauthorizedDomainModalProps> = ({ isOpe
 };
 
 const DeviceForm = ({ initialData, onSave, onCancel }: { initialData?: Device, onSave: (data: Partial<Device>) => void, onCancel: () => void }) => {
-  const [formData, setFormData] = useState<Partial<Device>>(initialData || {
-    name: '',
-    model: '',
-    serialNumber: '',
-    manufacturer: '',
-    origin: '',
-    yearOfProduction: new Date().getFullYear(),
-    expiryGCP: '',
-    expiryGKD: '',
-    gcpIssueDate: '',
-    gcpPeriod: 12,
-    gkdIssueDate: '',
-    gkdPeriod: 12,
-    lastMaintenance: '',
-    maintenancePeriod: 6,
-    notes: ''
+  const [formData, setFormData] = useState<Partial<Device>>(() => {
+    if (initialData) return { ...initialData };
+    return {
+      name: '',
+      model: '',
+      serialNumber: '',
+      manufacturer: '',
+      origin: '',
+      yearOfProduction: new Date().getFullYear(),
+      expiryGCP: '',
+      expiryGKD: '',
+      gcpIssueDate: '',
+      gcpPeriod: 12,
+      gkdIssueDate: '',
+      gkdPeriod: 12,
+      lastMaintenance: '',
+      maintenancePeriod: 6,
+      notes: '',
+      manager: ''
+    };
   });
 
   const handleGcpChange = (updates: { gcpIssueDate?: string; gcpPeriod?: number; expiryGCP?: string }) => {
@@ -2089,6 +2095,15 @@ const DeviceForm = ({ initialData, onSave, onCancel }: { initialData?: Device, o
             value={formData.maintenancePeriod !== undefined ? formData.maintenancePeriod : ''}
             onChange={(e) => setFormData({ ...formData, maintenancePeriod: e.target.value ? parseInt(e.target.value) : undefined })}
             placeholder="Ví dụ: 6, 12..."
+          />
+        </div>
+        <div className="col-span-2">
+          <label className={labelClass}>Người quản lý thiết bị</label>
+          <input 
+            className={inputClass}
+            value={formData.manager || ''}
+            onChange={(e) => setFormData({ ...formData, manager: e.target.value })}
+            placeholder="Ví dụ: Nguyễn Mạnh Hà, Trần Thị Mai..."
           />
         </div>
       </div>
@@ -2458,7 +2473,17 @@ const DeviceRowV2 = ({ device, onConfirm, onDelete, onEdit, onShowHistory, onSho
             </span>
           )}
         </div>
-        <div className="text-[11px] text-slate-400 font-mono uppercase tracking-tighter">{device.model}</div>
+        <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+          <span className="text-[11px] text-slate-400 font-mono uppercase tracking-tighter">{device.model}</span>
+          {device.manager && (
+            <>
+              <span className="text-slate-300">•</span>
+              <span className="inline-flex items-center text-[10px] bg-sky-50 text-sky-700 hover:bg-sky-100 border border-sky-100 px-1.5 py-0.5 rounded-md font-medium" title="Người phụ trách quản lý">
+                QL: {device.manager}
+              </span>
+            </>
+          )}
+        </div>
       </td>
       <td className="px-6 py-4">
         <div className="text-sm font-medium text-slate-600">{device.serialNumber}</div>
@@ -4397,7 +4422,10 @@ const HistoryModal = ({
             <h2 className="text-xl font-bold text-slate-800 mt-2">
               {device.name}
             </h2>
-            <p className="text-xs text-slate-500 font-medium font-sans">Model: {device.model} • S/N: {device.serialNumber}</p>
+            <p className="text-xs text-slate-500 font-medium font-sans">
+              Model: {device.model} • S/N: {device.serialNumber}
+              {device.manager && ` • Người quản lý: ${device.manager}`}
+            </p>
           </div>
           <button 
             onClick={onClose}
@@ -4745,6 +4773,12 @@ const NoteModal = ({
               </h2>
               <p className="text-xs text-slate-500 font-medium font-sans mt-0.5">
                 Model: <span className="font-mono text-slate-700">{device.model}</span> • S/N: <span className="font-mono text-slate-700">{device.serialNumber}</span> • Chu kỳ bảo trì: <span className="font-bold text-amber-700">{device.maintenancePeriod ? `${device.maintenancePeriod} tháng` : 'Không bảo trì'}</span>
+                {device.manager && (
+                  <>
+                    <span className="text-slate-300"> • </span>
+                    Người quản lý: <span className="font-bold text-blue-700">{device.manager}</span>
+                  </>
+                )}
               </p>
             </div>
           </div>

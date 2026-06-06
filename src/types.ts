@@ -36,6 +36,7 @@ export interface Device {
   notes?: string;
   noteDate?: string;
   notesList?: DeviceNote[];
+  manager?: string; // Người quản lý thiết bị
 }
 
 export interface MaintenanceLog {

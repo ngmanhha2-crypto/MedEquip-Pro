@@ -26,7 +26,8 @@ export const MOCK_DEVICES: Device[] = [
         date: '2026-05-28',
         content: 'Các kỹ sư hãng Siemens thực hiện hiệu chỉnh bù sai lệch và kiểm tra các tính năng hệ thống phát tia X.'
       }
-    ]
+    ],
+    manager: 'Nguyễn Mạnh Hà'
   },
   {
     id: '2',
@@ -53,7 +54,8 @@ export const MOCK_DEVICES: Device[] = [
         date: '2026-06-01',
         content: 'Định kỳ hút bụi các khe tản nhiệt.'
       }
-    ]
+    ],
+    manager: 'Phạm Thanh Sơn'
   },
   {
     id: '3',
@@ -66,7 +68,8 @@ export const MOCK_DEVICES: Device[] = [
     expiryGCP: '2027-01-01',
     expiryGKD: '2026-06-10',
     lastMaintenance: '2026-01-10',
-    maintenancePeriod: 12
+    maintenancePeriod: 12,
+    manager: 'Lê Hoàng Nam'
   },
   {
     id: '4',
@@ -79,7 +82,8 @@ export const MOCK_DEVICES: Device[] = [
     expiryGCP: '2025-05-01', // Expired
     expiryGKD: '2026-05-05', // Expiring soon
     lastMaintenance: '2025-11-20',
-    maintenancePeriod: 6
+    maintenancePeriod: 6,
+    manager: 'Trần Thị Mai'
   },
   {
     id: '5',
@@ -92,6 +96,7 @@ export const MOCK_DEVICES: Device[] = [
     expiryGCP: '', // Invalid date test
     expiryGKD: '2026-08-15',
     lastMaintenance: '2025-08-15',
-    maintenancePeriod: 12
+    maintenancePeriod: 12,
+    manager: 'Nguyễn Mạnh Hà'
   }
 ];
