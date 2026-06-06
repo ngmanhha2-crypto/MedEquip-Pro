@@ -1923,6 +1923,8 @@ const DeviceForm = ({ initialData, onSave, onCancel }: { initialData?: Device, o
     if (updates.gcpIssueDate !== undefined || updates.gcpPeriod !== undefined) {
       if (nextData.gcpIssueDate && nextData.gcpPeriod) {
         nextData.expiryGCP = calculateExpiryFromIssue(nextData.gcpIssueDate, nextData.gcpPeriod);
+      } else {
+        nextData.expiryGCP = '';
       }
     }
     setFormData(nextData);
@@ -1933,6 +1935,8 @@ const DeviceForm = ({ initialData, onSave, onCancel }: { initialData?: Device, o
     if (updates.gkdIssueDate !== undefined || updates.gkdPeriod !== undefined) {
       if (nextData.gkdIssueDate && nextData.gkdPeriod) {
         nextData.expiryGKD = calculateExpiryFromIssue(nextData.gkdIssueDate, nextData.gkdPeriod);
+      } else {
+        nextData.expiryGKD = '';
       }
     }
     setFormData(nextData);
@@ -2013,10 +2017,10 @@ const DeviceForm = ({ initialData, onSave, onCancel }: { initialData?: Device, o
           <label className={labelClass}>Chu kỳ bảo trì (Tháng)</label>
           <input 
             type="number"
-            required
             className={inputClass}
-            value={formData.maintenancePeriod}
-            onChange={(e) => setFormData({ ...formData, maintenancePeriod: parseInt(e.target.value) })}
+            value={formData.maintenancePeriod !== undefined ? formData.maintenancePeriod : ''}
+            onChange={(e) => setFormData({ ...formData, maintenancePeriod: e.target.value ? parseInt(e.target.value) : undefined })}
+            placeholder="Ví dụ: 6, 12..."
           />
         </div>
       </div>
@@ -2059,7 +2063,6 @@ const DeviceForm = ({ initialData, onSave, onCancel }: { initialData?: Device, o
               <label className={labelClass}>Hạn Giấy phép (GCP)</label>
               <input 
                 type="date"
-                required
                 className={`${inputClass} bg-blue-50/30 border-blue-100 font-semibold text-blue-900`}
                 value={formData.expiryGCP || ''}
                 onChange={(e) => handleGcpChange({ expiryGCP: e.target.value })}
@@ -2099,7 +2102,6 @@ const DeviceForm = ({ initialData, onSave, onCancel }: { initialData?: Device, o
               <label className={labelClass}>Hạn Kiểm định (GKĐ)</label>
               <input 
                 type="date"
-                required
                 className={`${inputClass} bg-emerald-50/30 border-emerald-100 font-semibold text-emerald-900`}
                 value={formData.expiryGKD || ''}
                 onChange={(e) => handleGkdChange({ expiryGKD: e.target.value })}
@@ -2401,7 +2403,9 @@ const DeviceRowV2 = ({ device, onConfirm, onDelete, onEdit, onShowHistory, onSho
         <DateCell type="GKD" date={device.expiryGKD} days={gkdDays} label="GKD" warningDays={warningDaysGKD} />
       </td>
       <td className="px-6 py-4">
-        <div className="text-sm text-slate-500 italic">Định kỳ {device.maintenancePeriod} tháng</div>
+        <div className="text-sm text-slate-500 italic">
+          {device.maintenancePeriod ? `Định kỳ ${device.maintenancePeriod} tháng` : 'Không bảo trì định kỳ'}
+        </div>
         <div className="text-[10px] text-slate-400 font-medium uppercase mt-0.5">Lần cuối: {formatDisplayDate(device.lastMaintenance)}</div>
       </td>
       <td className="px-6 py-4 text-right">
@@ -2561,9 +2565,16 @@ const MaintenanceSchedule = ({
       </div>
       <div className="flex-1 overflow-auto p-6 space-y-4">
         {devices.map(device => {
-          const lastDate = parseISO(device.lastMaintenance);
-          const nextDate = addMonths(lastDate, device.maintenancePeriod);
-          const daysToMaintenance = differenceInDays(nextDate, new Date());
+          const hasMaintenance = !!device.lastMaintenance && !isNaN(new Date(device.lastMaintenance).getTime()) && !!device.maintenancePeriod;
+          let daysToMaintenance: number | null = null;
+          let nextDate: Date | null = null;
+
+          if (hasMaintenance) {
+            const lastDate = parseISO(device.lastMaintenance);
+            nextDate = addMonths(lastDate, device.maintenancePeriod);
+            daysToMaintenance = differenceInDays(nextDate, new Date());
+          }
+
           const isExpanded = !!expandedDevices[device.id];
 
           const thisLogs = activityLogs
@@ -2586,30 +2597,36 @@ const MaintenanceSchedule = ({
               >
                 <div className="flex items-center gap-4">
                   <div className={`w-12 h-12 rounded-lg flex items-center justify-center transition-colors ${
-                    daysToMaintenance < 7 ? 'bg-red-50 text-red-600' : 'bg-slate-50 text-slate-400'
+                    daysToMaintenance !== null && daysToMaintenance < 7 ? 'bg-red-50 text-red-600' : 'bg-slate-50 text-slate-400'
                   }`}>
                     <Clock size={24} />
                   </div>
                   <div>
                     <div className="font-bold text-slate-800">{device.name}</div>
                     <div className="text-xs text-slate-500 uppercase font-mono tracking-tighter">
-                      Model: {device.model} | Chu kỳ: {device.maintenancePeriod} tháng
+                      Model: {device.model} {device.maintenancePeriod ? `| Chu kỳ: ${device.maintenancePeriod} tháng` : '| Chu kỳ: Chưa thiết lập'}
                     </div>
                   </div>
                 </div>
                 <div className="flex items-center gap-4">
                   <div className="text-right">
                     <div className={`text-sm font-bold ${
-                      daysToMaintenance < 0 
+                      daysToMaintenance === null 
+                        ? 'text-slate-400'
+                        : daysToMaintenance < 0 
                         ? 'text-red-600' 
                         : daysToMaintenance < warningDaysBD 
                         ? 'text-orange-500' 
                         : 'text-slate-600'
                     }`}>
-                      Kiến nghị: {format(nextDate, 'dd/MM/yyyy')}
+                      Kiến nghị: {nextDate ? format(nextDate, 'dd/MM/yyyy') : 'Chưa đặt lịch'}
                     </div>
                     <div className="text-[10px] text-slate-400 italic">
-                      {daysToMaintenance < 0 ? `Đã quá hạn ${Math.abs(daysToMaintenance)} ngày` : `Còn lại ${daysToMaintenance} ngày`}
+                      {daysToMaintenance === null 
+                        ? 'Chưa cập nhật ngày bảo trì cuối' 
+                        : daysToMaintenance < 0 
+                        ? `Đã quá hạn ${Math.abs(daysToMaintenance)} ngày` 
+                        : `Còn lại ${daysToMaintenance} ngày`}
                     </div>
                   </div>
                   <ChevronRight 
@@ -4335,7 +4352,9 @@ const HistoryModal = ({
             </div>
             <div>
               <div className="text-[10px] uppercase font-bold text-slate-400">Bảo Trì Định Kỳ</div>
-              <div className="text-xs font-semibold text-slate-800 mt-0.5 font-sans">MỖI {device.maintenancePeriod} THÁNG</div>
+              <div className="text-xs font-semibold text-slate-800 mt-0.5 font-sans">
+                {device.maintenancePeriod ? `MỖI ${device.maintenancePeriod} THÁNG` : 'KHÔNG BẢO TRÌ'}
+              </div>
             </div>
           </div>
 
@@ -4657,7 +4676,7 @@ const NoteModal = ({
                 {device.name}
               </h2>
               <p className="text-xs text-slate-500 font-medium font-sans mt-0.5">
-                Model: <span className="font-mono text-slate-700">{device.model}</span> • S/N: <span className="font-mono text-slate-700">{device.serialNumber}</span> • Chu kỳ bảo trì: <span className="font-bold text-amber-700">{device.maintenancePeriod} tháng</span>
+                Model: <span className="font-mono text-slate-700">{device.model}</span> • S/N: <span className="font-mono text-slate-700">{device.serialNumber}</span> • Chu kỳ bảo trì: <span className="font-bold text-amber-700">{device.maintenancePeriod ? `${device.maintenancePeriod} tháng` : 'Không bảo trì'}</span>
               </p>
             </div>
           </div>
