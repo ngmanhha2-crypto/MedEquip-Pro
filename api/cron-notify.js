@@ -59,13 +59,31 @@ export default async function handler(req, res) {
   if (admin.apps.length === 0) {
     if (process.env.FIREBASE_SERVICE_ACCOUNT) {
       try {
-        const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+        let serviceAccount;
+        const rawSA = process.env.FIREBASE_SERVICE_ACCOUNT.trim();
+        if (rawSA.startsWith('{')) {
+          serviceAccount = JSON.parse(rawSA);
+        } else {
+          // In case it's base64 encoded or formatted differently
+          const decoded = Buffer.from(rawSA, 'base64').toString('utf8');
+          serviceAccount = JSON.parse(decoded);
+        }
+
+        if (serviceAccount.private_key) {
+          serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
+        }
+
         admin.initializeApp({
           credential: admin.credential.cert(serviceAccount)
         });
       } catch (err) {
         console.error("Loi doc tai khoan dich vu FIREBASE_SERVICE_ACCOUNT:", err);
-        return res.status(500).json({ success: false, error: "Sai cau hinh FIREBASE_SERVICE_ACCOUNT" });
+        return res.status(500).json({ 
+          success: false, 
+          error: "Sai cau hinh FIREBASE_SERVICE_ACCOUNT",
+          details: err.message,
+          suggestion: "Vui lòng kiểm tra xem biến môi trường FIREBASE_SERVICE_ACCOUNT trên Vercel đã đúng định dạng JSON chưa."
+        });
       }
     } else {
       // Setup default config from json
@@ -326,6 +344,111 @@ export default async function handler(req, res) {
 
   } catch (err) {
     console.error("Loi trong tien trinh chay Cron:", err);
+    
+    const errStr = err.message || String(err);
+    const isCredsError = errStr.includes("credentials") || errStr.includes("credential") || errStr.includes("default credentials") || errStr.includes("FIREBASE_SERVICE_ACCOUNT");
+
+    if (isCredsError) {
+      const suggestHtml = `
+        <!DOCTYPE html>
+        <html lang="vi">
+        <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Hướng dẫn Cấu hình Firebase Admin - MedEquip</title>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: #0f172a; color: #f8fafc; padding: 40px; line-height: 1.6; max-width: 800px; margin: 0 auto; }
+            h1 { color: #38bdf8; border-bottom: 2px solid #334155; padding-bottom: 10px; font-weight: 800; font-size: 24px; }
+            h2 { color: #e2e8f0; font-size: 18px; margin-top: 30px; }
+            code, pre { background-color: #1e293b; color: #38bdf8; padding: 4px 8px; border-radius: 6px; font-family: monospace; font-size: 13px; }
+            pre { padding: 15px; overflow-x: auto; border: 1px solid #334155; border-radius: 12px; }
+            .step { display: flex; margin-bottom: 20px; align-items: flex-start; }
+            .step-number { background-color: #38bdf8; color: #010409; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; margin-right: 15px; flex-shrink: 0; }
+            .step-text { flex: 1; }
+            .tip { background-color: #0c4a6e; border-left: 4px solid #0284c7; padding: 15px; border-radius: 8px; font-size: 14px; color: #e0f2fe; margin: 25px 0; }
+            .error-box { background-color: #451a03; border-left: 4px solid #f97316; padding: 15px; border-radius: 8px; font-size: 14px; color: #ffedd5; margin: 25px 0; }
+          </style>
+        </head>
+        <body>
+          <h1>🔒 Cần Cấu hình Tài khoản Dịch vụ Firebase Admin (Vercel API)</h1>
+          <p>Để API chạy tự động quét (Cron Job) trên môi trường <strong>Vercel</strong> bảo mật của bạn hoạt động, bạn cần cung cấp thông tin <strong>Firebase Service Account Key</strong> bảo mật của hệ thống.</p>
+          
+          <div class="error-box">
+            <strong>Chi tiết lỗi hệ thống:</strong> Could not load credentials. Firebase không thể xác thực tự động trên Vercel khi thiếu chuỗi khóa bảo mật.
+          </div>
+
+          <h2>🛠️ Các bước khắc phục nhanh (Chỉ mất 2 phút):</h2>
+          
+          <div class="step">
+            <div class="step-number">1</div>
+            <div class="step-text">
+              Truy cập vào <strong><a href="https://console.firebase.google.com" target="_blank" style="color: #38bdf8; text-decoration: underline;">Firebase Console</a></strong>, chọn dự án của bạn (<code>quanlythietbiyte-babd8</code>).
+            </div>
+          </div>
+
+          <div class="step">
+            <div class="step-number">2</div>
+            <div class="step-text">
+              Bấm vào biểu tượng <strong>Bánh Răng Cài Đặt (Project Settings)</strong> ở thực đơn góc trái phía trên -> Chọn tab <strong>"Service Accounts" (Tài khoản dịch vụ)</strong>.
+            </div>
+          </div>
+
+          <div class="step">
+            <div class="step-number">3</div>
+            <div class="step-text">
+              Chọn cấu hình là <strong>"Node.js"</strong> và click chuột vào nút màu xanh <strong>"Generate new private key" (Tạo khóa riêng tư mới)</strong>. Một tệp tin có định dạng <code>.json</code> chứa mã khóa bí mật sẽ được tải xuống máy tính của bạn.
+            </div>
+          </div>
+
+          <div class="step">
+            <div class="step-number">4</div>
+            <div class="step-text">
+              Mở file <code>.json</code> vừa tải về bằng bất kỳ phần mềm đọc văn bản nào và sao chép toàn bộ nội dung của tệp đó.
+            </div>
+          </div>
+
+          <div class="step">
+            <div class="step-number">5</div>
+            <div class="step-text">
+              Mở trang quản trị dự án của bạn trên <strong>Vercel Dashboard</strong> hoặc <strong>GitHub Settings</strong> nơi triển khai mã nguồn -> Tìm phần <strong>Environment Variables (Biến môi trường)</strong>.
+            </div>
+          </div>
+
+          <div class="step">
+            <div class="step-number">6</div>
+            <div class="step-text">
+              Thêm một biến môi trường mới với:<br>
+              • <strong>Name (Tên biến):</strong> <code>FIREBASE_SERVICE_ACCOUNT</code><br>
+              • <strong>Value (Giá trị):</strong> <i>Dán toàn bộ nội dung file JSON bạn vừa copy ở Bước 4 vào đây.</i><br>
+              Sau đó lưu lại và tiến hành Redeploy dự án hoặc Restart thì API Cron sẽ kết nối thông suốt cực kỳ bảo mật!
+            </div>
+          </div>
+
+          <div class="tip">
+            💡 <strong>Mẹo nhỏ bảo mật:</strong> Firebase Service Account Key là cực kỳ bảo mật, giúp ứng dụng backend Vercel được phép truy vấn dữ liệu từ Firestore của bạn định kỳ để tự động bắn cảnh báo qua Telegram / Email mà không cần mở tab trình duyệt!
+          </div>
+        </body>
+        </html>
+      `;
+
+      if (req.headers.accept && req.headers.accept.includes('text/html')) {
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        return res.status(200).send(suggestHtml);
+      }
+
+      return res.status(500).json({
+        success: false,
+        error: "Yêu cầu cấu hình FIREBASE_SERVICE_ACCOUNT",
+        message: "Firebase setup requires valid service account credentials in process.env.FIREBASE_SERVICE_ACCOUNT for serverless environments.",
+        steps: [
+          "Mở Firebase Console dự án của bạn.",
+          "Vào Project Settings -> Service Accounts.",
+          "Bấm 'Generate new private key' chọn Node.js để tải JSON về.",
+          "Copy nội dung file JSON dán vào biến môi trường FIREBASE_SERVICE_ACCOUNT trên Vercel của bạn."
+        ]
+      });
+    }
+
     return res.status(500).json({
       success: false,
       error: err.message || String(err)
