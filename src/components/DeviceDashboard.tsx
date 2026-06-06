@@ -2198,6 +2198,16 @@ const DeviceRowV2 = ({ device, onConfirm, onDelete, onEdit, onShowHistory, onSho
   const [editingField, setEditingField] = useState<'GCP' | 'GKD' | null>(null);
   const [tempDate, setTempDate] = useState('');
   const [showMenu, setShowMenu] = useState(false);
+  const menuContainerRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    if (showMenu && menuContainerRef.current) {
+      const timer = setTimeout(() => {
+        menuContainerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }, 80);
+      return () => clearTimeout(timer);
+    }
+  }, [showMenu]);
 
   const gcpDays = getDaysRemaining(device.expiryGCP);
   const gkdDays = getDaysRemaining(device.expiryGKD);
@@ -2463,10 +2473,11 @@ const DeviceRowV2 = ({ device, onConfirm, onDelete, onEdit, onShowHistory, onSho
                     }}
                   />
                   <motion.div 
+                    ref={menuContainerRef}
                     initial={{ opacity: 0, scale: 0.95, y: -10 }}
                     animate={{ opacity: 1, scale: 1, y: 0 }}
                     exit={{ opacity: 0, scale: 0.95, y: -10 }}
-                    className="absolute right-0 bottom-full mb-2 w-48 bg-white rounded-xl shadow-2xl border border-slate-200 py-2 z-40"
+                    className="absolute right-0 top-full mt-2 w-48 bg-white rounded-xl shadow-2xl border border-slate-200 py-2 z-40 origin-top-right"
                   >
                     <button 
                       onClick={(e) => {
