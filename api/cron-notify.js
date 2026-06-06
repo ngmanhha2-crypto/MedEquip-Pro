@@ -121,224 +121,264 @@ export default async function handler(req, res) {
       devices.push({ id: doc.id, ...doc.data() });
     });
 
-    console.log(`Tim thay ${devices.length} thiet bi. Bat dau phan tich cac dong den ban han...`);
+    console.log(`Tim thay ${devices.length} thiet bi.`);
 
-    // Standard warnings settings
-    const warningDaysGKD = parseInt(process.env.WARNING_DAYS_GKD || '30', 10);
-    const warningDaysGCP = parseInt(process.env.WARNING_DAYS_GCP || '30', 10);
-
-    // Filter list of alert devices
-    const expiredList = [];
-    const warningList = [];
-
-    devices.forEach(d => {
-      const gkdDays = getDaysRemaining(d.expiryGKD);
-      const gcpDays = getDaysRemaining(d.expiryGCP);
-
-      const dStatus = {
-        name: d.name,
-        model: d.model,
-        serialNumber: d.serialNumber,
-        expiryGKD: d.expiryGKD,
-        expiryGCP: d.expiryGCP,
-        gkdRemaining: gkdDays,
-        gcpRemaining: gcpDays,
-        userId: d.userId
-      };
-
-      // Check Expired
-      const isExpired = (gkdDays !== null && gkdDays < 0) || (gcpDays !== null && gcpDays < 0);
-      // Check Near Expiry (within config warning days)
-      const isWarning = (gkdDays !== null && gkdDays >= 0 && gkdDays <= warningDaysGKD) || 
-                        (gcpDays !== null && gcpDays >= 0 && gcpDays <= warningDaysGCP);
-
-      if (isExpired) {
-        expiredList.push(dStatus);
-      } else if (isWarning) {
-        warningList.push(dStatus);
-      }
+    // 2. Fetch all user configurations from firestore
+    console.log("Dang truy van cau hinh tu Firestore (userSettings)...");
+    const settingsSnap = await db.collection('userSettings').get();
+    const userSettingsMap = {};
+    settingsSnap.forEach(doc => {
+      userSettingsMap[doc.id] = doc.data();
     });
 
-    console.log(`Ket qua quet: ${expiredList.length} thiet bi da het han, ${warningList.length} thiet bi sap toi han.`);
-
-    // 2. Perform notifications if there is any alert
-    if (expiredList.length === 0 && warningList.length === 0) {
-      console.log("Moi thiet bi deu an toan. Khong can gui thong bao.");
-      return res.status(200).json({
-        success: true,
-        message: "Không tìm thấy thiết bị nào cần cảnh báo hôm nay.",
-        devicesScanned: devices.length,
-        expired: 0,
-        warning: 0
-      });
-    }
-
-    // Prepare notifications body
-    const todayStr = formatDisplayDate(new Date().toISOString().split('T')[0]);
-
-    // Let's format Telegram Message
-    let telegramMsg = `🔔 <b>CẢNH BÁO THỜI HẠN THIẾT BỊ ĐỊNH KỲ</b>\n`;
-    telegramMsg += `<i>Ngày quét: ${todayStr}</i>\n\n`;
-
-    if (expiredList.length > 0) {
-      telegramMsg += `🔴 <b>HẾT HẠN (${expiredList.length}):</b>\n`;
-      expiredList.forEach((d, idx) => {
-        telegramMsg += `${idx + 1}. <b>${d.name}</b> M: <i>${d.model}</i> - S/N: <code>${d.serialNumber}</code>\n`;
-        if (d.gkdRemaining !== null && d.gkdRemaining < 0) {
-          telegramMsg += `   • Kiểm định hết hạn: ${formatDisplayDate(d.expiryGKD)} (Quá ${Math.abs(d.gkdRemaining)} ngày)\n`;
-        }
-        if (d.gcpRemaining !== null && d.gcpRemaining < 0) {
-          telegramMsg += `   • Giấy phép hết hạn: ${formatDisplayDate(d.expiryGCP)} (Quá ${Math.abs(d.gcpRemaining)} ngày)\n`;
-        }
-      });
-      telegramMsg += `\n`;
-    }
-
-    if (warningList.length > 0) {
-      telegramMsg += `⚠️ <b>SẮP HẾT HẠN (${warningList.length}):</b>\n`;
-      warningList.forEach((d, idx) => {
-        telegramMsg += `${idx + 1}. <b>${d.name}</b> M: <i>${d.model}</i> - S/N: <code>${d.serialNumber}</code>\n`;
-        if (d.gkdRemaining !== null && d.gkdRemaining >= 0 && d.gkdRemaining <= warningDaysGKD) {
-          telegramMsg += `   • Kiểm định còn: ${d.gkdRemaining} ngày (${formatDisplayDate(d.expiryGKD)})\n`;
-        }
-        if (d.gcpRemaining !== null && d.gcpRemaining >= 0 && d.gcpRemaining <= warningDaysGCP) {
-          telegramMsg += `   • Giấy phép còn: ${d.gcpRemaining} ngày (${formatDisplayDate(d.expiryGCP)})\n`;
-        }
-      });
-    }
-
-    telegramMsg += `\n🔗 Truy cập ứng dụng để xử lý ngay.`;
-
-    // A. Send via Telegram
-    let telegramSent = false;
-    if (TELEGRAM_BOT_TOKEN && TELEGRAM_CHAT_ID) {
-      console.log(`Dang gui canh bao toi Telegram chat ${TELEGRAM_CHAT_ID}...`);
-      try {
-        const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: TELEGRAM_CHAT_ID,
-            text: telegramMsg,
-            parse_mode: 'HTML'
-          })
-        });
-        if (response.ok) {
-          telegramSent = true;
-          console.log("Gui tin nhan Telegram thanh cong!");
-        } else {
-          const errText = await response.text();
-          console.error("Loi gui Telegram tu API:", errText);
-        }
-      } catch (err) {
-        console.error("Loi ket noi Telegram API:", err);
+    // 3. Group devices by userId to support user-tailored alerts
+    const usersMap = {};
+    devices.forEach(d => {
+      const userId = d.userId || 'default-user';
+      if (!usersMap[userId]) {
+        usersMap[userId] = {
+          userId,
+          devices: [],
+          config: userSettingsMap[userId] || {},
+          expiredList: [],
+          warningList: []
+        };
       }
-    } else {
-      console.log("Chua cau hinh thong tin nhan Telegram (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID). Bo qua.");
-    }
+      usersMap[userId].devices.push(d);
+    });
 
-    // B. Send via Email (using Resend API)
-    let emailSent = false;
-    if (RESEND_API_KEY && RECIPIENT_EMAIL) {
-      console.log(`Dang gui email canh bao toi ${RECIPIENT_EMAIL} qua Resend API...`);
+    let totalExpired = 0;
+    let totalWarning = 0;
+    let telegramSendsSucceeded = 0;
+    let emailSendsSucceeded = 0;
+    let processesStatus = [];
+
+    // 4. Process warnings and dispatch notifications per user
+    for (const userId of Object.keys(usersMap)) {
+      const userGroup = usersMap[userId];
+      const config = userGroup.config;
+
+      // Extract configs with fallback to env vars or defaults
+      const warningDaysGKD = parseInt(config.warningDaysGKD !== undefined ? config.warningDaysGKD : (process.env.WARNING_DAYS_GKD || '30'), 10);
+      const warningDaysGCP = parseInt(config.warningDaysGCP !== undefined ? config.warningDaysGCP : (process.env.WARNING_DAYS_GCP || '30'), 10);
       
-      // Build aesthetic HTML email body
-      let htmlBody = `
-        <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff;">
-          <div style="padding-bottom: 20px; border-bottom: 1px solid #f1f5f9; text-align: center;">
-            <h1 style="color: #0f172a; font-size: 20px; margin: 0;">Báo Cáo Tình Trạng Thiết Bị Định Kỳ</h1>
-            <p style="color: #64748b; font-size: 14px; margin: 5px 0 0 0;">Ngày kiểm tra: ${todayStr}</p>
-          </div>
-          <div style="padding: 20px 0;">
-      `;
+      const channels = config.channels || { expiryGCP: true, expiryGKD: true, maintenance: true };
+      const checkGCP = channels.expiryGCP !== false;
+      const checkGKD = channels.expiryGKD !== false;
 
-      if (expiredList.length > 0) {
-        htmlBody += `
-          <div style="margin-bottom: 25px;">
-            <h2 style="color: #ef4444; font-size: 16px; margin-bottom: 10px; border-bottom: 2px solid #fee2e2; padding-bottom: 5px;">🔴 ĐÃ QUÁ HẠN (${expiredList.length})</h2>
-            <table style="width: 100%; border-collapse: collapse;">
-        `;
-        expiredList.forEach(d => {
-          htmlBody += `
-            <tr style="border-bottom: 1px solid #f8fafc;">
-              <td style="padding: 8px 0; font-weight: bold; font-size: 14px; color: #1e293b;">${d.name} (${d.model})</td>
-              <td style="padding: 8px 0; font-size: 12px; color: #ef4444; text-align: right;">
-                ${d.gkdRemaining < 0 ? `Kiểm định quá hạn ${Math.abs(d.gkdRemaining)} ngày<br/>` : ''}
-                ${d.gcpRemaining < 0 ? `Giấy phép quá hạn ${Math.abs(d.gcpRemaining)} ngày` : ''}
-              </td>
-            </tr>
-          `;
-        });
-        htmlBody += `</table></div>`;
-      }
+      // Filter warnings for this user's devices
+      userGroup.devices.forEach(d => {
+        const gkdDays = checkGKD ? getDaysRemaining(d.expiryGKD) : null;
+        const gcpDays = checkGCP ? getDaysRemaining(d.expiryGCP) : null;
 
-      if (warningList.length > 0) {
-        htmlBody += `
-          <div style="margin-bottom: 25px;">
-            <h2 style="color: #f97316; font-size: 16px; margin-bottom: 10px; border-bottom: 2px solid #ffedd5; padding-bottom: 5px;">⚠️ SẮP HẾT HẠN (${warningList.length})</h2>
-            <table style="width: 100%; border-collapse: collapse;">
-        `;
-        warningList.forEach(d => {
-          htmlBody += `
-            <tr style="border-bottom: 1px solid #f8fafc;">
-              <td style="padding: 8px 0; font-weight: bold; font-size: 14px; color: #1e293b;">${d.name} (${d.model})</td>
-              <td style="padding: 8px 0; font-size: 12px; color: #f97316; text-align: right;">
-                ${d.gkdRemaining !== null && d.gkdRemaining >= 0 && d.gkdRemaining <= warningDaysGKD ? `Kiểm định còn ${d.gkdRemaining} ngày<br/>` : ''}
-                ${d.gcpRemaining !== null && d.gcpRemaining >= 0 && d.gcpRemaining <= warningDaysGCP ? `Giấy phép còn ${d.gcpRemaining} ngày` : ''}
-              </td>
-            </tr>
-          `;
-        });
-        htmlBody += `</table></div>`;
-      }
+        const dStatus = {
+          name: d.name,
+          model: d.model,
+          serialNumber: d.serialNumber,
+          expiryGKD: d.expiryGKD,
+          expiryGCP: d.expiryGCP,
+          gkdRemaining: gkdDays,
+          gcpRemaining: gcpDays,
+          userId: d.userId
+        };
 
-      htmlBody += `
-          </div>
-          <div style="padding-top: 15px; border-top: 1px solid #f1f5f9; text-align: center; font-size: 11px; color: #94a3b8;">
-            Vui lòng duy trì cập nhật thiết bị thường xuyên. Đây là email tự động từ MedEquip Manager.
-          </div>
-        </div>
-      `;
+        const isExpired = (gkdDays !== null && gkdDays < 0) || (gcpDays !== null && gcpDays < 0);
+        const isWarning = (gkdDays !== null && gkdDays >= 0 && gkdDays <= warningDaysGKD) || 
+                          (gcpDays !== null && gcpDays >= 0 && gcpDays <= warningDaysGCP);
 
-      try {
-        const response = await fetch('https://api.resend.com/emails', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${RESEND_API_KEY}`
-          },
-          body: JSON.stringify({
-            from: 'MedEquip Manager <onboarding@resend.dev>',
-            to: RECIPIENT_EMAIL,
-            subject: `[CẢNH BÁO] Hệ thống MedEquip: Có ${expiredList.length + warningList.length} hồ sơ cần cập nhật!`,
-            html: htmlBody
-          })
-        });
-
-        if (response.ok) {
-          emailSent = true;
-          console.log("Gui Email qua Resend thanh cong!");
-        } else {
-          const errText = await response.text();
-          console.error("Loi gui Email tu Resend API:", errText);
+        if (isExpired) {
+          userGroup.expiredList.push(dStatus);
+          totalExpired++;
+        } else if (isWarning) {
+          userGroup.warningList.push(dStatus);
+          totalWarning++;
         }
-      } catch (err) {
-        console.error("Loi tien hanh gui Email API:", err);
+      });
+
+      console.log(`User ${userId}: co ${userGroup.expiredList.length} thiet bi giam, ${userGroup.warningList.length} thiet bi phu hap.`);
+
+      // If user has warnings, dispatch alerts
+      if (userGroup.expiredList.length > 0 || userGroup.warningList.length > 0) {
+        const todayStr = formatDisplayDate(new Date().toISOString().split('T')[0]);
+
+        // A. Telegram Dispatch
+        const botToken = config.telegramBotToken || TELEGRAM_BOT_TOKEN;
+        const chatId = config.telegramChatId || TELEGRAM_CHAT_ID;
+        const telegramEnabled = config.telegramEnabled !== undefined ? config.telegramEnabled : (!!botToken && !!chatId);
+
+        let telegramSentUser = false;
+
+        if (telegramEnabled && botToken && chatId) {
+          let telegramMsg = `🔔 <b>CẢNH BÁO THỜI HẠN THIẾT BỊ ĐỊNH KỲ</b>\n`;
+          telegramMsg += `<i>Ngày quét: ${todayStr}</i>\n\n`;
+
+          if (userGroup.expiredList.length > 0) {
+            telegramMsg += `🔴 <b>HẾT HẠN (${userGroup.expiredList.length}):</b>\n`;
+            userGroup.expiredList.forEach((d, idx) => {
+              telegramMsg += `${idx + 1}. <b>${d.name}</b> M: <i>${d.model}</i> - S/N: <code>${d.serialNumber}</code>\n`;
+              if (d.gkdRemaining !== null && d.gkdRemaining < 0) {
+                telegramMsg += `   • Kiểm định hết hạn: ${formatDisplayDate(d.expiryGKD)} (Quá ${Math.abs(d.gkdRemaining)} ngày)\n`;
+              }
+              if (d.gcpRemaining !== null && d.gcpRemaining < 0) {
+                telegramMsg += `   • Giấy phép hết hạn: ${formatDisplayDate(d.expiryGCP)} (Quá ${Math.abs(d.gcpRemaining)} ngày)\n`;
+              }
+            });
+            telegramMsg += `\n`;
+          }
+
+          if (userGroup.warningList.length > 0) {
+            telegramMsg += `⚠️ <b>SẮP HẾT HẠN (${userGroup.warningList.length}):</b>\n`;
+            userGroup.warningList.forEach((d, idx) => {
+              telegramMsg += `${idx + 1}. <b>${d.name}</b> M: <i>${d.model}</i> - S/N: <code>${d.serialNumber}</code>\n`;
+              if (d.gkdRemaining !== null && d.gkdRemaining >= 0 && d.gkdRemaining <= warningDaysGKD) {
+                telegramMsg += `   • Kiểm định còn: ${d.gkdRemaining} ngày (${formatDisplayDate(d.expiryGKD)})\n`;
+              }
+              if (d.gcpRemaining !== null && d.gcpRemaining >= 0 && d.gcpRemaining <= warningDaysGCP) {
+                telegramMsg += `   • Giấy phép còn: ${d.gcpRemaining} ngày (${formatDisplayDate(d.expiryGCP)})\n`;
+              }
+            });
+          }
+
+          telegramMsg += `\n🔗 Truy cập ứng dụng để xử lý ngay.`;
+
+          console.log(`Dang gui Telegram cho nguoi dung ${userId} den chat ID ${chatId}...`);
+          try {
+            const telUrl = `https://api.telegram.org/bot${botToken}/sendMessage`;
+            const response = await fetch(telUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                chat_id: chatId,
+                text: telegramMsg,
+                parse_mode: 'HTML'
+              })
+            });
+            if (response.ok) {
+              telegramSentUser = true;
+              telegramSendsSucceeded++;
+              console.log(`Telegram cho nguoi dung ${userId} gui thanh cong!`);
+            } else {
+              const telErr = await response.text();
+              console.error(`Loi tra ve tu Telegram cua nguoi dung ${userId}:`, telErr);
+            }
+          } catch (err) {
+            console.error(`Loi ket noi Telegram API cua nguoi dung ${userId}:`, err);
+          }
+        }
+
+        // B. Email Dispatch (Resend API)
+        const recipientEmail = config.recipientEmail || RECIPIENT_EMAIL;
+        const isSubscribed = config.isSubscribed !== undefined ? config.isSubscribed : (!!recipientEmail);
+        let emailSentUser = false;
+
+        if (RESEND_API_KEY && isSubscribed && recipientEmail) {
+          console.log(`Dang gui email canh bao den ${recipientEmail} cho nguoi dung ${userId}...`);
+          
+          let htmlBody = `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff;">
+              <div style="padding-bottom: 20px; border-bottom: 1px solid #f1f5f9; text-align: center;">
+                <h1 style="color: #0f172a; font-size: 20px; margin: 0;">Báo Cáo Tình Trạng Thiết Bị Định Kỳ</h1>
+                <p style="color: #64748b; font-size: 14px; margin: 5px 0 0 0;">Ngày kiểm tra: ${todayStr}</p>
+              </div>
+              <div style="padding: 20px 0;">
+          `;
+
+          if (userGroup.expiredList.length > 0) {
+            htmlBody += `
+              <div style="margin-bottom: 25px;">
+                <h2 style="color: #ef4444; font-size: 16px; margin-bottom: 10px; border-bottom: 2px solid #fee2e2; padding-bottom: 5px;">🔴 ĐÃ QUÁ HẠN (${userGroup.expiredList.length})</h2>
+                <table style="width: 100%; border-collapse: collapse;">
+            `;
+            userGroup.expiredList.forEach(d => {
+              htmlBody += `
+                <tr style="border-bottom: 1px solid #f8fafc;">
+                  <td style="padding: 8px 0; font-weight: bold; font-size: 14px; color: #1e293b;">${d.name} (${d.model})</td>
+                  <td style="padding: 8px 0; font-size: 12px; color: #ef4444; text-align: right;">
+                    ${d.gkdRemaining < 0 ? `Kiểm định quá hạn ${Math.abs(d.gkdRemaining)} ngày<br/>` : ''}
+                    ${d.gcpRemaining < 0 ? `Giấy phép quá hạn ${Math.abs(d.gcpRemaining)} ngày` : ''}
+                  </td>
+                </tr>
+              `;
+            });
+            htmlBody += `</table></div>`;
+          }
+
+          if (userGroup.warningList.length > 0) {
+            htmlBody += `
+              <div style="margin-bottom: 25px;">
+                <h2 style="color: #f97316; font-size: 16px; margin-bottom: 10px; border-bottom: 2px solid #ffedd5; padding-bottom: 5px;">⚠️ SẮP HẾT HẠN (${userGroup.warningList.length})</h2>
+                <table style="width: 100%; border-collapse: collapse;">
+            `;
+            userGroup.warningList.forEach(d => {
+              htmlBody += `
+                <tr style="border-bottom: 1px solid #f8fafc;">
+                  <td style="padding: 8px 0; font-weight: bold; font-size: 14px; color: #1e293b;">${d.name} (${d.model})</td>
+                  <td style="padding: 8px 0; font-size: 12px; color: #f97316; text-align: right;">
+                    ${d.gkdRemaining !== null && d.gkdRemaining >= 0 && d.gkdRemaining <= warningDaysGKD ? `Kiểm định còn ${d.gkdRemaining} ngày<br/>` : ''}
+                    ${d.gcpRemaining !== null && d.gcpRemaining >= 0 && d.gcpRemaining <= warningDaysGCP ? `Giấy phép còn ${d.gcpRemaining} ngày` : ''}
+                  </td>
+                </tr>
+              `;
+            });
+            htmlBody += `</table></div>`;
+          }
+
+          htmlBody += `
+              </div>
+              <div style="padding-top: 15px; border-top: 1px solid #f1f5f9; text-align: center; font-size: 11px; color: #94a3b8;">
+                Vui lòng duy trì cập nhật thiết bị thường xuyên. Đây là email tự động từ MedEquip Manager.
+              </div>
+            </div>
+          `;
+
+          try {
+            const response = await fetch('https://api.resend.com/emails', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${RESEND_API_KEY}`
+              },
+              body: JSON.stringify({
+                from: 'MedEquip Manager <onboarding@resend.dev>',
+                to: recipientEmail,
+                subject: `[CẢNH BÁO] Hệ thống MedEquip: Có ${userGroup.expiredList.length + userGroup.warningList.length} hồ sơ cần cập nhật!`,
+                html: htmlBody
+              })
+            });
+
+            if (response.ok) {
+              emailSentUser = true;
+              emailSendsSucceeded++;
+              console.log(`Email gui cho nguoi dung ${userId} thanh cong!`);
+            } else {
+              const resendErrText = await response.text();
+              console.error(`Loi thu tu Resend API cua nguoi dung ${userId}:`, resendErrText);
+            }
+          } catch (err) {
+            console.error(`Loi gui Email API cua nguoi dung ${userId}:`, err);
+          }
+        }
+
+        processesStatus.push({
+          userId,
+          telegramSent: telegramSentUser,
+          emailSent: emailSentUser,
+          expiredFound: userGroup.expiredList.length,
+          warningFound: userGroup.warningList.length
+        });
       }
-    } else {
-      console.log("Chua cau hinh email nguoi nhan hoac RESEND_API_KEY. Bo qua.");
     }
 
     return res.status(200).json({
       success: true,
-      message: "Quá trình kiểm tra và thông báo hoàn tất.",
+      message: "Quá trình quét và thông báo tự động đồng bộ theo Firestore hoàn tất.",
       devicesScanned: devices.length,
-      alertsTelegram: telegramSent ? "Đã gửi" : "Không gửi (Chưa cấu hình)",
-      alertsEmail: emailSent ? "Đã gửi" : "Không gửi (Chưa cấu hình)",
+      alertsTelegramDispatched: `${telegramSendsSucceeded} tin nhắn`,
+      alertsEmailDispatched: `${emailSendsSucceeded} thư điện tử`,
+      usersProcessed: processesStatus,
       details: {
-        expired: expiredList.length,
-        warning: warningList.length
+        expired: totalExpired,
+        warning: totalWarning
       }
     });
 

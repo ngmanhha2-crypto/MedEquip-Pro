@@ -205,3 +205,38 @@ export async function deleteActivityLogFromFirestore(userId: string, logId: stri
     handleFirestoreError(error, OperationType.DELETE, docPath);
   }
 }
+
+// --- Firestore UserSettings Accessors ---
+
+export async function fetchSettingsFromFirestore(userId: string): Promise<any> {
+  const docPath = `userSettings/${userId}`;
+  try {
+    const docSnap = await getDocFromServer(doc(db, 'userSettings', userId));
+    if (docSnap.exists()) {
+      return docSnap.data();
+    }
+    return null;
+  } catch (error) {
+    // If we just get a permission or connection issue, return null gracefully or throw
+    try {
+      const offlineDoc = await getDocFromServer(doc(db, 'userSettings', userId));
+      if (offlineDoc.exists()) return offlineDoc.data();
+    } catch {}
+    console.warn("Lỗi khi tải cấu hình người dùng từ Firestore:", error);
+    return null;
+  }
+}
+
+export async function saveSettingsToFirestore(userId: string, settings: any): Promise<void> {
+  const docPath = `userSettings/${userId}`;
+  try {
+    const payload = cleanPayload({
+      ...settings,
+      userId
+    });
+    await setDoc(doc(db, 'userSettings', userId), payload);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, docPath);
+  }
+}
+

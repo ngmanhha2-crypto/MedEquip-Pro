@@ -55,7 +55,9 @@ import {
   deleteDeviceFromFirestore,
   fetchActivityLogsFromFirestore,
   saveActivityLogToFirestore,
-  deleteActivityLogFromFirestore
+  deleteActivityLogFromFirestore,
+  fetchSettingsFromFirestore,
+  saveSettingsToFirestore
 } from '../utils/firebaseService';
 import { motion, AnimatePresence } from 'motion/react';
 import * as XLSX from 'xlsx';
@@ -92,6 +94,34 @@ const DeviceDashboard: React.FC = () => {
     const val = localStorage.getItem('medequip_warning_days_bd');
     return val ? parseInt(val) : 30;
   });
+
+  // Lifted Email Settings States
+  const [recipientEmail, setRecipientEmail] = useState<string>(() => {
+    return localStorage.getItem('medequip_saved_recipient_email') || '';
+  });
+  const [isSubscribed, setIsSubscribed] = useState<boolean>(() => {
+    return localStorage.getItem('medequip_saved_is_subscribed') === 'true';
+  });
+  const [channels, setChannels] = useState<{ expiryGCP: boolean; expiryGKD: boolean; maintenance: boolean }>(() => {
+    try {
+      const saved = localStorage.getItem('medequip_saved_notification_channels');
+      return saved ? JSON.parse(saved) : { expiryGCP: true, expiryGKD: true, maintenance: true };
+    } catch {
+      return { expiryGCP: true, expiryGKD: true, maintenance: true };
+    }
+  });
+
+  React.useEffect(() => {
+    localStorage.setItem('medequip_saved_recipient_email', recipientEmail);
+  }, [recipientEmail]);
+
+  React.useEffect(() => {
+    localStorage.setItem('medequip_saved_is_subscribed', isSubscribed ? 'true' : 'false');
+  }, [isSubscribed]);
+
+  React.useEffect(() => {
+    localStorage.setItem('medequip_saved_notification_channels', JSON.stringify(channels));
+  }, [channels]);
 
   // Shared Google Drive Integration States
   const [isDriveConnected, setIsDriveConnected] = useState(() => {
@@ -473,6 +503,20 @@ const DeviceDashboard: React.FC = () => {
       if (currentUser) {
         setLoadingData(true);
         try {
+          // Fetch settings from Firestore
+          const firestoreSettings = await fetchSettingsFromFirestore(currentUser.uid);
+          if (active && firestoreSettings) {
+            if (firestoreSettings.telegramBotToken !== undefined) setTelegramBotToken(firestoreSettings.telegramBotToken);
+            if (firestoreSettings.telegramChatId !== undefined) setTelegramChatId(firestoreSettings.telegramChatId);
+            if (firestoreSettings.telegramEnabled !== undefined) setTelegramEnabled(firestoreSettings.telegramEnabled);
+            if (firestoreSettings.warningDaysGCP !== undefined) setWarningDaysGCP(firestoreSettings.warningDaysGCP);
+            if (firestoreSettings.warningDaysGKD !== undefined) setWarningDaysGKD(firestoreSettings.warningDaysGKD);
+            if (firestoreSettings.warningDaysBD !== undefined) setWarningDaysBD(firestoreSettings.warningDaysBD);
+            if (firestoreSettings.recipientEmail !== undefined) setRecipientEmail(firestoreSettings.recipientEmail);
+            if (firestoreSettings.isSubscribed !== undefined) setIsSubscribed(firestoreSettings.isSubscribed);
+            if (firestoreSettings.channels !== undefined) setChannels(firestoreSettings.channels);
+          }
+
           const firestoreDevices = await fetchDevicesFromFirestore(currentUser.uid);
           if (!active) return;
 
@@ -1140,6 +1184,44 @@ const DeviceDashboard: React.FC = () => {
     localStorage.setItem('medequip_warning_days_bd', warningDaysBD.toString());
   }, [warningDaysBD]);
 
+  // Auto-sync all settings to Firestore (Debounced)
+  React.useEffect(() => {
+    const currentUser = auth.currentUser;
+    if (!currentUser || loadingData) return;
+
+    const timer = setTimeout(async () => {
+      try {
+        await saveSettingsToFirestore(currentUser.uid, {
+          telegramBotToken,
+          telegramChatId,
+          telegramEnabled,
+          warningDaysGCP,
+          warningDaysGKD,
+          warningDaysBD,
+          recipientEmail,
+          isSubscribed,
+          channels
+        });
+        console.log("Cài đặt thông báo & Telegram đã tự động đồng bộ hóa lên Firestore.");
+      } catch (err) {
+        console.warn("Lỗi khi tự động lưu cài đặt lên Firestore:", err);
+      }
+    }, 1500);
+
+    return () => clearTimeout(timer);
+  }, [
+    telegramBotToken,
+    telegramChatId,
+    telegramEnabled,
+    warningDaysGCP,
+    warningDaysGKD,
+    warningDaysBD,
+    recipientEmail,
+    isSubscribed,
+    channels,
+    loadingData
+  ]);
+
   if (isAuthChecking) {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
@@ -1504,6 +1586,12 @@ const DeviceDashboard: React.FC = () => {
               setTelegramEnabled={setTelegramEnabled}
               onSendTestMessage={handleSendTelegramTestMessage}
               onSendSummaryReport={handleSendTelegramSummaryReport}
+              recipientEmail={recipientEmail}
+              setRecipientEmail={setRecipientEmail}
+              isSubscribed={isSubscribed}
+              setIsSubscribed={setIsSubscribed}
+              channels={channels}
+              setChannels={setChannels}
             />
           ) : (
             <LegalDocumentsPanel 
@@ -2601,6 +2689,12 @@ interface SettingsPanelProps {
   setTelegramEnabled: (val: boolean) => void;
   onSendTestMessage: (message: string) => Promise<boolean>;
   onSendSummaryReport: () => Promise<void>;
+  recipientEmail: string;
+  setRecipientEmail: (val: string) => void;
+  isSubscribed: boolean;
+  setIsSubscribed: (val: boolean) => void;
+  channels: { expiryGCP: boolean; expiryGKD: boolean; maintenance: boolean };
+  setChannels: React.Dispatch<React.SetStateAction<{ expiryGCP: boolean; expiryGKD: boolean; maintenance: boolean }>>;
 }
 
 const SettingsPanel: React.FC<SettingsPanelProps> = ({
@@ -2626,34 +2720,16 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   telegramEnabled,
   setTelegramEnabled,
   onSendTestMessage,
-  onSendSummaryReport
+  onSendSummaryReport,
+  recipientEmail,
+  setRecipientEmail,
+  isSubscribed,
+  setIsSubscribed,
+  channels,
+  setChannels
 }) => {
-  const [email, setEmail] = useState(() => {
-    return localStorage.getItem('medequip_saved_recipient_email') || '';
-  });
-  const [isSubscribed, setIsSubscribed] = useState(() => {
-    return localStorage.getItem('medequip_saved_is_subscribed') === 'true';
-  });
-  const [channels, setChannels] = useState<{ expiryGCP: boolean; expiryGKD: boolean; maintenance: boolean }>(() => {
-    try {
-      const saved = localStorage.getItem('medequip_saved_notification_channels');
-      return saved ? JSON.parse(saved) : { expiryGCP: true, expiryGKD: true, maintenance: true };
-    } catch {
-      return { expiryGCP: true, expiryGKD: true, maintenance: true };
-    }
-  });
-
-  React.useEffect(() => {
-    localStorage.setItem('medequip_saved_recipient_email', email);
-  }, [email]);
-
-  React.useEffect(() => {
-    localStorage.setItem('medequip_saved_is_subscribed', isSubscribed ? 'true' : 'false');
-  }, [isSubscribed]);
-
-  React.useEffect(() => {
-    localStorage.setItem('medequip_saved_notification_channels', JSON.stringify(channels));
-  }, [channels]);
+  const email = recipientEmail;
+  const setEmail = setRecipientEmail;
 
   // Telegram scanner states
   const [scanning, setScanning] = useState(false);
