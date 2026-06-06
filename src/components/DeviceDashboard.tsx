@@ -172,23 +172,10 @@ const DeviceDashboard: React.FC = () => {
     return initialDocs;
   });
 
-  const [scanState, setScanState] = useState<'idle' | 'scanning' | 'completed'>(() => {
-    return (localStorage.getItem('medequip_saved_scan_state') as 'idle' | 'scanning' | 'completed') || 'idle';
-  });
-  const [scanProgress, setScanProgress] = useState(() => {
-    return Number(localStorage.getItem('medequip_saved_scan_progress') || '0');
-  });
-  const [currentScanningName, setCurrentScanningName] = useState(() => {
-    return localStorage.getItem('medequip_saved_scan_current_name') || '';
-  });
-  const [scanResults, setScanResults] = useState<Array<{ id: string; folderName: string; fileCount: number; files: string[] }>>(() => {
-    try {
-      const saved = localStorage.getItem('medequip_saved_scan_results');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
+  const [scanState, setScanState] = useState<'idle' | 'scanning' | 'completed'>('idle');
+  const [scanProgress, setScanProgress] = useState(0);
+  const [currentScanningName, setCurrentScanningName] = useState('');
+  const [scanResults, setScanResults] = useState<Array<{ id: string; folderName: string; fileCount: number; files: string[] }>>([]);
 
   const [isScanReportVisible, setIsScanReportVisible] = useState(false);
 
@@ -205,22 +192,6 @@ const DeviceDashboard: React.FC = () => {
   React.useEffect(() => {
     localStorage.setItem('medequip_saved_mock_docs', JSON.stringify(mockDocs));
   }, [mockDocs]);
-
-  React.useEffect(() => {
-    localStorage.setItem('medequip_saved_scan_state', scanState);
-  }, [scanState]);
-
-  React.useEffect(() => {
-    localStorage.setItem('medequip_saved_scan_progress', scanProgress.toString());
-  }, [scanProgress]);
-
-  React.useEffect(() => {
-    localStorage.setItem('medequip_saved_scan_current_name', currentScanningName);
-  }, [currentScanningName]);
-
-  React.useEffect(() => {
-    localStorage.setItem('medequip_saved_scan_results', JSON.stringify(scanResults));
-  }, [scanResults]);
 
 
   const [showAuthDomainError, setShowAuthDomainError] = useState(false);
