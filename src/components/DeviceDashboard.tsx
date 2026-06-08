@@ -57,7 +57,9 @@ import {
   saveActivityLogToFirestore,
   deleteActivityLogFromFirestore,
   fetchSettingsFromFirestore,
-  saveSettingsToFirestore
+  saveSettingsToFirestore,
+  fetchSharedDriveConfig,
+  saveSharedDriveConfig
 } from '../utils/firebaseService';
 import { motion, AnimatePresence } from 'motion/react';
 import * as XLSX from 'xlsx';
@@ -290,9 +292,36 @@ const DeviceDashboard: React.FC = () => {
     );
 
     // 2. Primary Email/Password auth listener
-    const unsubscribePrimary = onAuthStateChanged(auth, (user) => {
+    const unsubscribePrimary = onAuthStateChanged(auth, async (user) => {
       setAppUser(user);
       setIsAuthChecking(false);
+      
+      if (user) {
+        // Fetch globally shared Google Drive config to support quick persistent sharing across devices/accounts
+        try {
+          const sharedDrive = await fetchSharedDriveConfig();
+          if (sharedDrive && sharedDrive.connected) {
+            setIsDriveConnected(true);
+            setDriveUserEmail(sharedDrive.email || 'Người dùng Google/Phòng X-Quang');
+            if (sharedDrive.driveFolderIds) {
+              setDriveFolderIds(sharedDrive.driveFolderIds);
+            }
+            localStorage.setItem('medequip_google_connected', 'true');
+            if (sharedDrive.accessToken) {
+              localStorage.setItem('medequip_google_access_token', sharedDrive.accessToken);
+            }
+            if (sharedDrive.email) {
+              localStorage.setItem('medequip_google_email', sharedDrive.email);
+            }
+            if (sharedDrive.driveFolderIds) {
+              localStorage.setItem('medequip_saved_drive_folder_ids', JSON.stringify(sharedDrive.driveFolderIds));
+            }
+            console.log("Đã tải cấu hình đồng bộ Google Drive dùng chung của phòng X-Quang thành công.");
+          }
+        } catch (err) {
+          console.warn("Lỗi tải cấu hình Drive dùng chung khi khởi tạo:", err);
+        }
+      }
     });
 
     return () => {
@@ -1244,6 +1273,51 @@ const DeviceDashboard: React.FC = () => {
     channels,
     loadingData
   ]);
+
+  // Auto-sync Google Drive configurations & folder mappings to Firestore for cross-account & cross-device persistence
+  React.useEffect(() => {
+    const currentUser = auth.currentUser;
+    if (!currentUser || loadingData) return;
+
+    if (isDriveConnected) {
+      const gAccessToken = localStorage.getItem('medequip_google_access_token') || '';
+      const timer = setTimeout(async () => {
+        try {
+          await saveSharedDriveConfig({
+            id: 'shared_drive',
+            accessToken: gAccessToken,
+            email: driveUserEmail || '',
+            connected: true,
+            driveFolderIds: driveFolderIds || {},
+            updatedAt: new Date().toISOString()
+          });
+          console.log("Cấu hình đồng bộ Google Drive dùng chung đã lưu thành công lên Firestore.");
+        } catch (err) {
+          console.warn("Lỗi đồng bộ cấu hình Drive dùng chung lên Firestore:", err);
+        }
+      }, 1500);
+
+      return () => clearTimeout(timer);
+    } else {
+      const timer = setTimeout(async () => {
+        try {
+          const sharedDrive = await fetchSharedDriveConfig();
+          if (sharedDrive && sharedDrive.connected) {
+            await saveSharedDriveConfig({
+              id: 'shared_drive',
+              connected: false,
+              driveFolderIds: {} // clear shared folders mapping as well upon disconnect
+            });
+            console.log("Đã cập nhật ngắt kết nối Google Drive đồng bộ dùng chung trên Firestore.");
+          }
+        } catch (err) {
+          console.warn("Lỗi cập nhật ngắt kết nối Drive lên Firestore:", err);
+        }
+      }, 1500);
+
+      return () => clearTimeout(timer);
+    }
+  }, [isDriveConnected, driveUserEmail, driveFolderIds, loadingData]);
 
   if (isAuthChecking) {
     return (

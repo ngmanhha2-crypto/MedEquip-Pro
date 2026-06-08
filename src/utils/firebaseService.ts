@@ -240,3 +240,36 @@ export async function saveSettingsToFirestore(userId: string, settings: any): Pr
   }
 }
 
+// --- Shared Group Google Drive Config Accessors ---
+
+export async function fetchSharedDriveConfig(): Promise<any> {
+  const docPath = 'globalDriveConfig/shared_drive';
+  try {
+    const docSnap = await getDocFromServer(doc(db, 'globalDriveConfig', 'shared_drive'));
+    if (docSnap.exists()) {
+      return docSnap.data();
+    }
+    return null;
+  } catch (error) {
+    try {
+      const offlineDoc = await getDocFromServer(doc(db, 'globalDriveConfig', 'shared_drive'));
+      if (offlineDoc.exists()) return offlineDoc.data();
+    } catch {}
+    console.warn("Lỗi khi tải cấu hình Drive dùng chung từ Firestore:", error);
+    return null;
+  }
+}
+
+export async function saveSharedDriveConfig(settings: any): Promise<void> {
+  const docPath = 'globalDriveConfig/shared_drive';
+  try {
+    const payload = cleanPayload({
+      ...settings,
+      id: 'shared_drive'
+    });
+    await setDoc(doc(db, 'globalDriveConfig', 'shared_drive'), payload);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, docPath);
+  }
+}
+

@@ -58,6 +58,29 @@ service cloud.firestore {
         && (!data.keys().hasAny(['notes']) || (data.notes is string && data.notes.size() <= 4000));
     }
 
+    function isValidUserSettings(data) {
+      return data.userId is string && data.userId.size() <= 128
+        && data.userId == request.auth.uid
+        && (!data.keys().hasAny(['telegramBotToken']) || (data.telegramBotToken is string && data.telegramBotToken.size() <= 256))
+        && (!data.keys().hasAny(['telegramChatId']) || (data.telegramChatId is string && data.telegramChatId.size() <= 128))
+        && (!data.keys().hasAny(['telegramEnabled']) || (data.telegramEnabled is bool))
+        && (!data.keys().hasAny(['warningDaysGCP']) || (data.warningDaysGCP is int))
+        && (!data.keys().hasAny(['warningDaysGKD']) || (data.warningDaysGKD is int))
+        && (!data.keys().hasAny(['warningDaysBD']) || (data.warningDaysBD is int))
+        && (!data.keys().hasAny(['recipientEmail']) || (data.recipientEmail is string && data.recipientEmail.size() <= 256))
+        && (!data.keys().hasAny(['isSubscribed']) || (data.isSubscribed is bool))
+        && (!data.keys().hasAny(['channels']) || (data.channels is map));
+    }
+
+    function isValidDriveConfig(data) {
+      return data.id is string && data.id.size() <= 128
+        && data.connected is bool
+        && (!data.keys().hasAny(['email']) || (data.email is string && data.email.size() <= 256))
+        && (!data.keys().hasAny(['accessToken']) || (data.accessToken is string && data.accessToken.size() <= 1024))
+        && (!data.keys().hasAny(['driveFolderIds']) || (data.driveFolderIds is map))
+        && (!data.keys().hasAny(['updatedAt']) || (data.updatedAt is string && data.updatedAt.size() <= 64));
+    }
+
     // --- Collection Routes ---
 
     // 2. Devices Collection Rules
@@ -100,6 +123,28 @@ service cloud.firestore {
       
       // Activity logs are immutable append-only records
       allow update: if false;
+    }
+
+    // 4. UserSettings Collection Rules
+    match /userSettings/{userId} {
+      allow get: if isSignedIn() && userId == request.auth.uid;
+      allow list: if isSignedIn() && userId == request.auth.uid;
+      allow create, update: if isSignedIn()
+        && isValidId(userId)
+        && userId == request.auth.uid
+        && isValidUserSettings(incoming());
+      allow delete: if isSignedIn() && userId == request.auth.uid;
+    }
+
+    // 5. GlobalDriveConfig Collection Rules
+    match /globalDriveConfig/{configId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn();
+      allow create, update: if isSignedIn()
+        && isValidId(configId)
+        && incoming().id == configId
+        && isValidDriveConfig(incoming());
+      allow delete: if isSignedIn();
     }
   }
 }

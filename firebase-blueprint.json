@@ -56,6 +56,38 @@
         "notes": { "type": "string" }
       },
       "required": ["id", "userId", "deviceId", "date", "user", "type", "categoryLabel", "description"]
+    },
+    "UserSettings": {
+      "title": "UserSettings",
+      "description": "User specific configurations, alerts and credentials",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "telegramBotToken": { "type": "string" },
+        "telegramChatId": { "type": "string" },
+        "telegramEnabled": { "type": "boolean" },
+        "warningDaysGCP": { "type": "integer" },
+        "warningDaysGKD": { "type": "integer" },
+        "warningDaysBD": { "type": "integer" },
+        "recipientEmail": { "type": "string" },
+        "isSubscribed": { "type": "boolean" },
+        "channels": { "type": "object" }
+      },
+      "required": ["userId"]
+    },
+    "GlobalDriveConfig": {
+      "title": "GlobalDriveConfig",
+      "description": "Shared Google Drive synchronization settings for the X-ray department",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "accessToken": { "type": "string" },
+        "email": { "type": "string" },
+        "connected": { "type": "boolean" },
+        "driveFolderIds": { "type": "object" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "connected"]
     }
   },
   "firestore": {
@@ -66,6 +98,14 @@
     "/activityLogs/{logId}": {
       "schema": "ActivityLog",
       "description": "The collection of audit trails, verification events and logs"
+    },
+    "/userSettings/{userId}": {
+      "schema": "UserSettings",
+      "description": "The user configurations collection containing specific alert warning days, Telegram tokens and notification preferences"
+    },
+    "/globalDriveConfig/{configId}": {
+      "schema": "GlobalDriveConfig",
+      "description": "Global synchronized shared Google Drive authentication and folders mapping"
     }
   }
 }
