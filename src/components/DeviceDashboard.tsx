@@ -101,7 +101,7 @@ const DeviceDashboard: React.FC = () => {
   // Custom warning thresholds configuration days (Giấy phép GCP, Kiểm định GKĐ, Bảo dưỡng BD)
   const [warningDaysGCP, setWarningDaysGCP] = useState<number>(() => {
     const val = localStorage.getItem('medequip_warning_days_gcp');
-    return val ? parseInt(val) : 30;
+    return val ? (parseInt(val) === 30 ? 75 : parseInt(val)) : 75;
   });
   const [warningDaysGKD, setWarningDaysGKD] = useState<number>(() => {
     const val = localStorage.getItem('medequip_warning_days_gkd');
@@ -2279,7 +2279,7 @@ interface DeviceRowProps {
   key?: any;
 }
 
-const DeviceRowV2 = ({ device, onConfirm, onDelete, onEdit, onShowHistory, onShowNote, warningDaysGCP = 30, warningDaysGKD = 30 }: DeviceRowProps) => {
+const DeviceRowV2 = ({ device, onConfirm, onDelete, onEdit, onShowHistory, onShowNote, warningDaysGCP = 75, warningDaysGKD = 30 }: DeviceRowProps) => {
   const [editingField, setEditingField] = useState<'GCP' | 'GKD' | null>(null);
   const [tempDate, setTempDate] = useState('');
   const [showMenu, setShowMenu] = useState(false);
@@ -3494,8 +3494,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     <h4 className="font-bold text-slate-850 text-sm">Đã đồng bộ Google Drive toàn diện</h4>
                     <p className="text-xs text-slate-510 font-bold mt-1.5 font-mono text-green-750">{driveUserEmail}</p>
                     <div className="text-[11px] text-slate-400 mt-2 space-y-1 font-sans">
-                      <p>✨ Thư mục gốc tự tạo: <code className="bg-slate-100 text-amber-800 px-1 py-0.2 rounded font-bold">MedEquip_Pro_Documents</code></p>
-                      <p>⚡️ Hồ sơ của từng thiết bị được phân nhóm tự động vào các thư mục tương ứng.</p>
+                      <p>✨ Thư mục gốc: <code className="bg-slate-100 text-amber-800 px-1 py-0.2 rounded font-bold">MedEquip_Pro_Documents</code> <span className="inline-flex items-center text-[10px] bg-green-50 text-green-700 font-bold px-1.5 py-0.2 rounded ml-1 border border-green-100">ĐÃ CHIA SẺ XEM & TẢI VỀ</span></p>
+                      <p>⚡️ Thư mục gốc và các thư mục con tự động chia sẻ ở chế độ Viewer, cho phép tất cả các tài khoản truy cập xem & tải tài liệu dễ dàng.</p>
                     </div>
                   </div>
                 </div>

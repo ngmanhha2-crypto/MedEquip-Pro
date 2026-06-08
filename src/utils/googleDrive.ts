@@ -221,14 +221,48 @@ export async function findOrCreateFolder(name: string, parentId?: string): Promi
   return createData.id;
 }
 
+// Helper to share a file or folder so that "anyone with the link can view & download"
+export async function shareFileOrFolderToEveryone(fileId: string): Promise<void> {
+  const token = await getAccessToken();
+  if (!token) return;
+
+  const url = `${DRIVE_API_URL}/${fileId}/permissions`;
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        role: 'reader',
+        type: 'anyone'
+      })
+    });
+    if (!res.ok) {
+      const errText = await res.text();
+      console.warn('Lỗi thiết lập quyền chia sẻ công khai:', errText);
+    }
+  } catch (e) {
+    console.warn('Lỗi kết nối khi gọi API chia sẻ:', e);
+  }
+}
+
 // 2. Resolve subfolder for target Device
 export async function getDeviceFolderId(deviceName: string): Promise<string> {
   const rootFolderName = 'MedEquip_Pro_Documents';
   const rootFolderId = await findOrCreateFolder(rootFolderName);
+  
+  // Always share the root folder to ensure all accounts have read access
+  await shareFileOrFolderToEveryone(rootFolderId);
 
   // Clean device name from invalid characters
   const cleanName = deviceName.replace(/[^\w\s\-\u00C0-\u1EF9]/gi, '').trim() || 'Device_Files';
   const deviceFolderId = await findOrCreateFolder(cleanName, rootFolderId);
+  
+  // Share child folder to ensure access to specific device documents
+  await shareFileOrFolderToEveryone(deviceFolderId);
+
   return deviceFolderId;
 }
 
@@ -289,7 +323,10 @@ export async function uploadFileToFolder(folderId: string, file: File): Promise<
     throw await parseGoogleApiError(res, 'Đăng tải tài liệu thất bại');
   }
 
-  return await res.json();
+  const data = await res.json();
+  // Always share the uploaded file so all accounts can view & download
+  await shareFileOrFolderToEveryone(data.id);
+  return data;
 }
 
 // 5. Delete specific file
