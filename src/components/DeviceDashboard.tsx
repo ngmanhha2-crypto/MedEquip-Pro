@@ -566,14 +566,26 @@ const DeviceDashboard: React.FC = () => {
           const firestoreDevices = await fetchDevicesFromFirestore(currentUser.uid);
           if (!active) return;
 
+          const isAlreadySeeded = firestoreSettings && firestoreSettings.hasSeeded === true;
+
           if (firestoreDevices && firestoreDevices.length > 0) {
             setDevices(firestoreDevices);
             const firestoreLogs = await fetchActivityLogsFromFirestore(currentUser.uid);
             if (active) {
               setActivityLogs(firestoreLogs || []);
             }
+          } else if (isAlreadySeeded) {
+            // User intentionally cleared the devices list. Keep it empty.
+            setDevices([]);
+            const firestoreLogs = await fetchActivityLogsFromFirestore(currentUser.uid);
+            if (active) {
+              setActivityLogs(firestoreLogs || []);
+            }
           } else {
-            const seedDevices = MOCK_DEVICES.map(d => ({
+            // Lấy chính danh sách thiết bị đang hiển thị trong state hiện tại (nếu có)
+            // Giúp giữ lại thông tin người quản lý, tên, số serial mà bạn đã chỉnh sửa hoặc thêm mới trước khi đồng bộ!
+            const devicesToSeed = (devices && devices.length > 0) ? devices : MOCK_DEVICES;
+            const seedDevices = devicesToSeed.map(d => ({
               ...d,
               userId: currentUser.uid
             }));
@@ -620,6 +632,12 @@ const DeviceDashboard: React.FC = () => {
             for (const log of initialLogsSeed) {
               await saveActivityLogToFirestore(currentUser.uid, log);
             }
+
+            // Explicitly save settings flag that we migrated/seeded and won't do it again
+            await saveSettingsToFirestore(currentUser.uid, {
+              ...firestoreSettings,
+              hasSeeded: true
+            });
 
             if (active) {
               setDevices(seedDevices);
@@ -696,17 +714,32 @@ const DeviceDashboard: React.FC = () => {
         if (currentDriveConnected) {
           let folderId = driveFolderIds[target.id];
           if (!folderId) {
-            folderId = await getDeviceFolderId(target.name);
-            setDriveFolderIds(prev => ({ ...prev, [target.id]: folderId }));
+            // Chỉ rà soát tìm kiếm thư mục có sẵn, KHÔNG tự động tạo mới khi chưa đồng bộ/quét để tránh sinh thư mục rác
+            const foundId = await getDeviceFolderId(target.name, false);
+            if (foundId) {
+              folderId = foundId;
+              setDriveFolderIds(prev => ({ ...prev, [target.id]: foundId }));
+            }
           }
-          const filesFound = await listFolderFiles(folderId);
-          setDriveFiles(prev => ({ ...prev, [target.id]: filesFound }));
-          results.push({
-            id: target.id,
-            folderName: target.name,
-            fileCount: filesFound.length,
-            files: filesFound.map(f => f.name)
-          });
+          
+          if (folderId) {
+            const filesFound = await listFolderFiles(folderId);
+            setDriveFiles(prev => ({ ...prev, [target.id]: filesFound }));
+            results.push({
+              id: target.id,
+              folderName: target.name,
+              fileCount: filesFound.length,
+              files: filesFound.map(f => f.name)
+            });
+          } else {
+            // Chưa liên kết hoặc chưa tạo thư mục thật trên Drive, hiển thị trống
+            results.push({
+              id: target.id,
+              folderName: target.name,
+              fileCount: 0,
+              files: []
+            });
+          }
         } else {
           // Local simulated
           const localFiles = mockDocs[target.id] || [];
@@ -2071,8 +2104,6 @@ const DeviceForm = ({ initialData, onSave, onCancel }: { initialData?: Device, o
     if (updates.gcpIssueDate !== undefined || updates.gcpPeriod !== undefined) {
       if (nextData.gcpIssueDate && nextData.gcpPeriod) {
         nextData.expiryGCP = calculateExpiryFromIssue(nextData.gcpIssueDate, nextData.gcpPeriod);
-      } else {
-        nextData.expiryGCP = '';
       }
     }
     setFormData(nextData);
@@ -2083,8 +2114,6 @@ const DeviceForm = ({ initialData, onSave, onCancel }: { initialData?: Device, o
     if (updates.gkdIssueDate !== undefined || updates.gkdPeriod !== undefined) {
       if (nextData.gkdIssueDate && nextData.gkdPeriod) {
         nextData.expiryGKD = calculateExpiryFromIssue(nextData.gkdIssueDate, nextData.gkdPeriod);
-      } else {
-        nextData.expiryGKD = '';
       }
     }
     setFormData(nextData);

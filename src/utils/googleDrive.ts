@@ -221,6 +221,32 @@ export async function findOrCreateFolder(name: string, parentId?: string): Promi
   return createData.id;
 }
 
+// Search folder by name without creating it if not found
+export async function findFolderOnly(name: string, parentId?: string): Promise<string | null> {
+  const token = await getAccessToken();
+  if (!token) return null;
+
+  let query = `mimeType='application/vnd.google-apps.folder' and name='${name}' and trashed=false`;
+  if (parentId) {
+    query += ` and '${parentId}' in parents`;
+  }
+
+  const searchUrl = `${DRIVE_API_URL}?q=${encodeURIComponent(query)}&fields=files(id,name)`;
+  try {
+    const searchRes = await fetch(searchUrl, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (!searchRes.ok) return null;
+    const searchData = await searchRes.json();
+    if (searchData.files && searchData.files.length > 0) {
+      return searchData.files[0].id;
+    }
+  } catch (e) {
+    console.warn("Lỗi tìm kiếm nhanh thư mục:", e);
+  }
+  return null;
+}
+
 // Helper to share a file or folder so that "anyone with the link can view & download"
 export async function shareFileOrFolderToEveryone(fileId: string): Promise<void> {
   const token = await getAccessToken();
@@ -249,21 +275,30 @@ export async function shareFileOrFolderToEveryone(fileId: string): Promise<void>
 }
 
 // 2. Resolve subfolder for target Device
-export async function getDeviceFolderId(deviceName: string): Promise<string> {
+export async function getDeviceFolderId(deviceName: string, createIfNotFound: boolean = true): Promise<string | null> {
   const rootFolderName = 'MedEquip_Pro_Documents';
-  const rootFolderId = await findOrCreateFolder(rootFolderName);
   
-  // Always share the root folder to ensure all accounts have read access
-  await shareFileOrFolderToEveryone(rootFolderId);
+  let rootFolderId: string | null = null;
+  if (createIfNotFound) {
+    rootFolderId = await findOrCreateFolder(rootFolderName);
+    // Always share the root folder to ensure all accounts have read access
+    await shareFileOrFolderToEveryone(rootFolderId);
+  } else {
+    rootFolderId = await findFolderOnly(rootFolderName);
+    if (!rootFolderId) return null;
+  }
 
   // Clean device name from invalid characters
   const cleanName = deviceName.replace(/[^\w\s\-\u00C0-\u1EF9]/gi, '').trim() || 'Device_Files';
-  const deviceFolderId = await findOrCreateFolder(cleanName, rootFolderId);
   
-  // Share child folder to ensure access to specific device documents
-  await shareFileOrFolderToEveryone(deviceFolderId);
-
-  return deviceFolderId;
+  if (createIfNotFound) {
+    const deviceFolderId = await findOrCreateFolder(cleanName, rootFolderId);
+    // Share child folder to ensure access to specific device documents
+    await shareFileOrFolderToEveryone(deviceFolderId);
+    return deviceFolderId;
+  } else {
+    return await findFolderOnly(cleanName, rootFolderId);
+  }
 }
 
 // 3. List files in designated subfolder

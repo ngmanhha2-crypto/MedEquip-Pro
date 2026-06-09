@@ -69,6 +69,7 @@ service cloud.firestore {
         && (!data.keys().hasAny(['warningDaysBD']) || (data.warningDaysBD is int))
         && (!data.keys().hasAny(['recipientEmail']) || (data.recipientEmail is string && data.recipientEmail.size() <= 256))
         && (!data.keys().hasAny(['isSubscribed']) || (data.isSubscribed is bool))
+        && (!data.keys().hasAny(['hasSeeded']) || (data.hasSeeded is bool))
         && (!data.keys().hasAny(['channels']) || (data.channels is map));
     }
 

@@ -234,7 +234,7 @@ export async function saveSettingsToFirestore(userId: string, settings: any): Pr
       ...settings,
       userId
     });
-    await setDoc(doc(db, 'userSettings', userId), payload);
+    await setDoc(doc(db, 'userSettings', userId), payload, { merge: true });
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, docPath);
   }

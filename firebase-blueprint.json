@@ -71,6 +71,7 @@
         "warningDaysBD": { "type": "integer" },
         "recipientEmail": { "type": "string" },
         "isSubscribed": { "type": "boolean" },
+        "hasSeeded": { "type": "boolean" },
         "channels": { "type": "object" }
       },
       "required": ["userId"]
