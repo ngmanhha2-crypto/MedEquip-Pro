@@ -45,7 +45,8 @@ import {
   uploadFileToFolder,
   deleteDriveFile,
   formatBytes,
-  DriveFile
+  DriveFile,
+  renameDriveFolder
 } from '../utils/googleDrive';
 import {
   auth,
@@ -301,22 +302,45 @@ const DeviceDashboard: React.FC = () => {
         try {
           const sharedDrive = await fetchSharedDriveConfig();
           if (sharedDrive && sharedDrive.connected) {
-            setIsDriveConnected(true);
-            setDriveUserEmail(sharedDrive.email || 'Người dùng Google/Phòng X-Quang');
-            if (sharedDrive.driveFolderIds) {
-              setDriveFolderIds(sharedDrive.driveFolderIds);
-            }
-            localStorage.setItem('medequip_google_connected', 'true');
+            let tokenValid = false;
             if (sharedDrive.accessToken) {
-              localStorage.setItem('medequip_google_access_token', sharedDrive.accessToken);
+              try {
+                const testRes = await fetch('https://www.googleapis.com/drive/v3/files?pageSize=1', {
+                  headers: { Authorization: `Bearer ${sharedDrive.accessToken}` }
+                });
+                if (testRes.ok) {
+                  tokenValid = true;
+                }
+              } catch (e) {
+                console.warn("Lỗi kiểm tra tính hợp lệ của token Google Drive dùng chung:", e);
+              }
             }
-            if (sharedDrive.email) {
-              localStorage.setItem('medequip_google_email', sharedDrive.email);
+
+            if (tokenValid) {
+              setIsDriveConnected(true);
+              setDriveUserEmail(sharedDrive.email || 'Người dùng Google/Phòng X-Quang');
+              if (sharedDrive.driveFolderIds) {
+                setDriveFolderIds(sharedDrive.driveFolderIds);
+              }
+              localStorage.setItem('medequip_google_connected', 'true');
+              if (sharedDrive.accessToken) {
+                localStorage.setItem('medequip_google_access_token', sharedDrive.accessToken);
+              }
+              if (sharedDrive.email) {
+                localStorage.setItem('medequip_google_email', sharedDrive.email);
+              }
+              if (sharedDrive.driveFolderIds) {
+                localStorage.setItem('medequip_saved_drive_folder_ids', JSON.stringify(sharedDrive.driveFolderIds));
+              }
+              console.log("Đã tải cấu hình đồng bộ Google Drive dùng chung thành công và xác thực hợp lệ.");
+            } else {
+              console.log("Tìm thấy cấu hình Google Drive dùng chung nhưng token đã hết hạn hoặc không hợp lệ trên thiết bị này. Chuyển sang chế độ ngoại tuyến.");
+              setIsDriveConnected(false);
+              setDriveUserEmail(null);
+              localStorage.removeItem('medequip_google_access_token');
+              localStorage.removeItem('medequip_google_connected');
+              localStorage.removeItem('medequip_google_email');
             }
-            if (sharedDrive.driveFolderIds) {
-              localStorage.setItem('medequip_saved_drive_folder_ids', JSON.stringify(sharedDrive.driveFolderIds));
-            }
-            console.log("Đã tải cấu hình đồng bộ Google Drive dùng chung của phòng X-Quang thành công.");
           }
         } catch (err) {
           console.warn("Lỗi tải cấu hình Drive dùng chung khi khởi tạo:", err);
@@ -760,7 +784,7 @@ const DeviceDashboard: React.FC = () => {
       } catch (err: any) {
         console.warn(`Tính năng đồng bộ Google Drive tạm dừng cho thư mục ${target.name}:`, err.message || err);
         const errorMsg = err.message || String(err);
-        const isUnauthorized = errorMsg.includes('401') || errorMsg.includes('Unauthorized') || errorMsg.includes('exp') || errorMsg.includes('token');
+        const isUnauthorized = errorMsg.includes('401') || errorMsg.includes('Unauthorized') || errorMsg.includes('exp') || errorMsg.includes('token') || errorMsg.includes('Vui lòng kết nối') || errorMsg.includes('kết nối Google Drive');
         const isApiDisabled = errorMsg.includes('chưa được kích hoạt') || errorMsg.includes('403') || errorMsg.includes('Forbidden') || errorMsg.includes('developers.google.com') || errorMsg.includes('disabled') || errorMsg.includes('has not been used');
         
         if ((isUnauthorized || isApiDisabled) && currentDriveConnected) {
@@ -950,6 +974,25 @@ const DeviceDashboard: React.FC = () => {
         setDevices(prev => prev.filter(d => d.id !== id));
         setActivityLogs(prev => prev.filter(log => log.deviceId !== id));
 
+        // Tự động đồng bộ xóa thư mục thiết bị tương ứng trên Google Drive nếu đang kết nối
+        if (isDriveConnected) {
+          const folderId = driveFolderIds[id];
+          if (folderId) {
+            deleteDriveFile(folderId)
+              .then(() => {
+                console.log(`Đã đồng bộ xóa thư mục Google Drive cho thiết bị bị xóa (id: ${id}, folderId: ${folderId})`);
+                setDriveFolderIds(prev => {
+                  const copy = { ...prev };
+                  delete copy[id];
+                  return copy;
+                });
+              })
+              .catch(err => {
+                console.warn(`Lỗi khi tự động đồng bộ xóa thư mục Google Drive cho thiết bị (id: ${id}):`, err.message || err);
+              });
+          }
+        }
+
         if (auth.currentUser) {
           try {
             await deleteDeviceFromFirestore(auth.currentUser.uid, id);
@@ -1030,6 +1073,32 @@ const DeviceDashboard: React.FC = () => {
       const updatedDevice = { ...targetEditDevice, ...deviceData, noteDate: updatedNoteDate, notesList: updatedNotesList } as Device;
       setDevices(prev => prev.map(d => d.id === targetEditDevice.id ? updatedDevice : d));
       
+      // Tự động đồng bộ đổi tên thư mục trên Google Drive nếu đang kết nối và có đổi tên thiết bị
+      const nameChanged = deviceData.name && deviceData.name !== targetEditDevice.name;
+      if (nameChanged && isDriveConnected) {
+        const folderId = driveFolderIds[targetEditDevice.id];
+        if (folderId) {
+          renameDriveFolder(folderId, deviceData.name!)
+            .then(() => {
+              console.log(`Đã tự động đồng bộ đổi tên thư mục Google Drive của thiết bị thành "${deviceData.name}"`);
+            })
+            .catch(err => {
+              console.warn(`Lỗi đổi tên thư mục Google Drive khi thay đổi tên thiết bị:`, err.message || err);
+            });
+        } else {
+          // Nếu chưa có mapping folder trước đó, tiến hành khởi tạo/tìm kiếm thư mục mới
+          getDeviceFolderId(deviceData.name!, true)
+            .then(newFolderId => {
+              if (newFolderId) {
+                setDriveFolderIds(prev => ({ ...prev, [targetEditDevice.id]: newFolderId }));
+              }
+            })
+            .catch(err => {
+              console.warn(`Lỗi tìm/tạo thư mục Google Drive mới cho thiết bị đổi tên:`, err.message || err);
+            });
+        }
+      }
+
       if (auth.currentUser) {
         updateDeviceInFirestore(auth.currentUser.uid, updatedDevice).catch(console.error);
       }
@@ -1066,6 +1135,20 @@ const DeviceDashboard: React.FC = () => {
         notesList: initialNotesList
       } as Device;
       setDevices(prev => [newDevice, ...prev]);
+
+      // Tự động đồng bộ khởi tạo thư mục riêng cho thiết bị mới trên Google Drive nếu đang kết nối
+      if (isDriveConnected) {
+        getDeviceFolderId(newDevice.name, true)
+          .then(folderId => {
+            if (folderId) {
+              setDriveFolderIds(prev => ({ ...prev, [generatedId]: folderId }));
+              console.log(`Đã tự động khởi tạo thư mục Google Drive cho thiết bị mới "${newDevice.name}" (folderId: ${folderId})`);
+            }
+          })
+          .catch(err => {
+            console.warn(`Lỗi khởi tạo thư mục Google Drive cho thiết bị mới:`, err.message || err);
+          });
+      }
 
       if (auth.currentUser) {
         saveDeviceToFirestore(auth.currentUser.uid, newDevice).catch(console.error);
@@ -3761,7 +3844,7 @@ const LegalDocumentsPanel = ({
         } catch (err: any) {
           console.error(err);
           const errorMsg = err.message || String(err);
-          const isUnauthorized = errorMsg.includes('401') || errorMsg.includes('Unauthorized') || errorMsg.includes('exp') || errorMsg.includes('token');
+          const isUnauthorized = errorMsg.includes('401') || errorMsg.includes('Unauthorized') || errorMsg.includes('exp') || errorMsg.includes('token') || errorMsg.includes('Vui lòng kết nối') || errorMsg.includes('kết nối Google Drive');
           const isApiDisabled = errorMsg.includes('chưa được kích hoạt') || errorMsg.includes('403') || errorMsg.includes('Forbidden') || errorMsg.includes('developers.google.com') || errorMsg.includes('disabled') || errorMsg.includes('has not been used');
           if (isUnauthorized || isApiDisabled) {
             setIsDriveConnected(false);
@@ -3809,7 +3892,7 @@ const LegalDocumentsPanel = ({
         }
       } catch (err: any) {
         const errorMsg = err.message || String(err);
-        const isUnauthorized = errorMsg.includes('401') || errorMsg.includes('Unauthorized') || errorMsg.includes('exp') || errorMsg.includes('token');
+        const isUnauthorized = errorMsg.includes('401') || errorMsg.includes('Unauthorized') || errorMsg.includes('exp') || errorMsg.includes('token') || errorMsg.includes('Vui lòng kết nối') || errorMsg.includes('kết nối Google Drive');
         const isApiDisabled = errorMsg.includes('chưa được kích hoạt') || errorMsg.includes('403') || errorMsg.includes('Forbidden') || errorMsg.includes('developers.google.com') || errorMsg.includes('disabled') || errorMsg.includes('has not been used');
         if (isUnauthorized || isApiDisabled) {
           setIsDriveConnected(false);
@@ -3902,7 +3985,7 @@ const LegalDocumentsPanel = ({
           }
         } catch (err: any) {
           const errorMsg = err.message || String(err);
-          const isUnauthorized = errorMsg.includes('401') || errorMsg.includes('Unauthorized') || errorMsg.includes('exp') || errorMsg.includes('token');
+          const isUnauthorized = errorMsg.includes('401') || errorMsg.includes('Unauthorized') || errorMsg.includes('exp') || errorMsg.includes('token') || errorMsg.includes('Vui lòng kết nối') || errorMsg.includes('kết nối Google Drive');
           const isApiDisabled = errorMsg.includes('chưa được kích hoạt') || errorMsg.includes('403') || errorMsg.includes('Forbidden') || errorMsg.includes('developers.google.com') || errorMsg.includes('disabled') || errorMsg.includes('has not been used');
           if (isUnauthorized || isApiDisabled) {
             setIsDriveConnected(false);

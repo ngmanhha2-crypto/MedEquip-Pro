@@ -386,3 +386,32 @@ export async function deleteDriveFile(fileId: string): Promise<void> {
     throw await parseGoogleApiError(res, 'Xóa tài liệu trên Drive thất bại');
   }
 }
+
+// 6. Rename specific folder/file on Google Drive
+export async function renameDriveFolder(folderId: string, newName: string): Promise<void> {
+  const token = await getAccessToken();
+  if (!token) throw new Error('Vui lòng kết nối Google Drive.');
+
+  // Clean device name from invalid characters
+  const cleanNewName = newName.replace(/[^\w\s\-\u00C0-\u1EF9]/gi, '').trim() || 'Device_Files';
+
+  const url = `${DRIVE_API_URL}/${folderId}`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ name: cleanNewName })
+    });
+  } catch (e: any) {
+    throw new Error(`Không thể kết nối để đổi tên thư mục Google Drive: ${e.message || e}`);
+  }
+
+  if (!res.ok) {
+    throw await parseGoogleApiError(res, 'Đổi tên thư mục thất bại');
+  }
+}
+
