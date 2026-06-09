@@ -363,6 +363,13 @@ const DeviceDashboard: React.FC = () => {
           await logout();
           setIsDriveConnected(false);
           setDriveUserEmail(null);
+          // Cập nhật lên Firestore cấu hình ngắt kết nối Google Drive dùng chung
+          await saveSharedDriveConfig({
+            id: 'shared_drive',
+            connected: false,
+            driveFolderIds: {}
+          });
+          console.log("Đã cập nhật ngắt kết nối Google Drive đồng bộ dùng chung trên Firestore.");
         } catch (err: any) {
           alert(`Lỗi khi đăng xuất: ${err.message || err}`);
         } finally {
@@ -1312,6 +1319,9 @@ const DeviceDashboard: React.FC = () => {
     const currentUser = auth.currentUser;
     if (!currentUser || loadingData) return;
 
+    // CHỈ tự động lưu/đồng bộ cấu hình nếu isDriveConnected là true (đang kết nối).
+    // Tuyệt đối không tự động ghi đè ngắt kết nối lên Firestore khi đang tải dữ liệu hoặc do chuyển đổi thiết bị mới có isDriveConnected tạm thời là false.
+    // Việc cập nhật trạng thái ngắt kết nối sẽ được can thiệp thủ công hoàn toàn từ nút bấm "Ngắt kết nối".
     if (isDriveConnected) {
       const gAccessToken = localStorage.getItem('medequip_google_access_token') || '';
       const timer = setTimeout(async () => {
@@ -1327,24 +1337,6 @@ const DeviceDashboard: React.FC = () => {
           console.log("Cấu hình đồng bộ Google Drive dùng chung đã lưu thành công lên Firestore.");
         } catch (err) {
           console.warn("Lỗi đồng bộ cấu hình Drive dùng chung lên Firestore:", err);
-        }
-      }, 1500);
-
-      return () => clearTimeout(timer);
-    } else {
-      const timer = setTimeout(async () => {
-        try {
-          const sharedDrive = await fetchSharedDriveConfig();
-          if (sharedDrive && sharedDrive.connected) {
-            await saveSharedDriveConfig({
-              id: 'shared_drive',
-              connected: false,
-              driveFolderIds: {} // clear shared folders mapping as well upon disconnect
-            });
-            console.log("Đã cập nhật ngắt kết nối Google Drive đồng bộ dùng chung trên Firestore.");
-          }
-        } catch (err) {
-          console.warn("Lỗi cập nhật ngắt kết nối Drive lên Firestore:", err);
         }
       }, 1500);
 
@@ -3069,6 +3061,13 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
         await logout();
         setIsDriveConnected(false);
         setDriveUserEmail(null);
+        // Cập nhật thẳng trạng thái ngắt kết nối lên Firestore một cách chủ động
+        await saveSharedDriveConfig({
+          id: 'shared_drive',
+          connected: false,
+          driveFolderIds: {}
+        });
+        console.log("Đã cập nhật ngắt kết nối Google Drive đồng bộ dùng chung lên Firestore từ menu Cài đặt.");
       } catch (err: any) {
         alert(`Lỗi khi ngắt kết nối: ${err.message || err}`);
       } finally {
