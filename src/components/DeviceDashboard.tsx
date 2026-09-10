@@ -1450,11 +1450,13 @@ const DeviceDashboard: React.FC = () => {
           className="w-full max-w-md bg-white border border-slate-100 rounded-3xl shadow-xl overflow-hidden p-8 z-10"
         >
           <div className="text-center mb-8">
-            <div className="mx-auto w-12 h-12 bg-blue-600 text-white rounded-2xl flex items-center justify-center text-xl font-black mb-4 shadow-md shadow-blue-500/20">
-              M
-            </div>
+            <img 
+              src="/logo.svg" 
+              alt="MedEquip Pro Logo" 
+              className="mx-auto w-14 h-14 rounded-2xl shadow-lg shadow-blue-500/25 mb-4 object-contain" 
+            />
             <h1 className="text-2xl font-black text-slate-900 tracking-tight leading-tight">MedEquip Pro</h1>
-            <p className="text-sm text-slate-500 mt-1.5">Hệ thống Quản lý & Giám sát Thiết bị Y tế</p>
+            <p className="text-sm text-slate-500 mt-1.5 font-medium">Hệ thống Quản lý Thiết bị Y tế & X-Quang</p>
           </div>
 
           <div className="flex border-b border-slate-100 mb-6 font-semibold">
@@ -1525,9 +1527,16 @@ const DeviceDashboard: React.FC = () => {
     <div className="flex h-screen bg-slate-50 font-sans text-slate-900 overflow-hidden">
       {/* Sidebar Navigation */}
       <aside className="w-64 bg-white border-r border-slate-200 flex flex-col shrink-0">
-        <div className="p-6 border-b border-slate-100 flex items-center gap-3">
-          <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold">X</div>
-          <h1 className="text-lg font-bold tracking-tight">MedEquip <span className="text-blue-600 font-medium">Pro</span></h1>
+        <div className="p-5 border-b border-slate-100 flex items-center gap-3">
+          <img 
+            src="/logo.svg" 
+            alt="MedEquip Pro Logo" 
+            className="w-9 h-9 rounded-xl shadow-sm shadow-blue-500/20 object-contain" 
+          />
+          <div>
+            <h1 className="text-base font-bold tracking-tight text-slate-900 leading-none">MedEquip <span className="text-blue-600 font-bold">Pro</span></h1>
+            <p className="text-[10px] text-slate-400 font-semibold mt-1 tracking-wider uppercase">Phòng X-Quang</p>
+          </div>
         </div>
         <nav className="flex-1 p-4 space-y-2">
           <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 px-2">Phòng X-Quang</div>
