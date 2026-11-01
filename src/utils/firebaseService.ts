@@ -143,9 +143,8 @@ export async function saveDeviceToFirestore(userId: string, device: Device): Pro
 export async function updateDeviceInFirestore(userId: string, device: Device): Promise<void> {
   const docPath = `devices/${device.id}`;
   try {
-    const { id, ...editableData } = device;
     const payload = cleanPayload({
-      ...editableData,
+      ...device,
       userId
     });
     await setDoc(doc(db, 'devices', device.id), payload);
