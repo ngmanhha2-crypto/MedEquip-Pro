@@ -2632,21 +2632,21 @@ service cloud.firestore {
         && data.name is string && data.name.size() <= 256
         && data.model is string && data.model.size() <= 128
         && data.serialNumber is string && data.serialNumber.size() <= 128
-        && (!data.keys().hasAny(['manufacturer']) || (data.manufacturer is string && data.manufacturer.size() <= 128))
-        && (!data.keys().hasAny(['origin']) || (data.origin is string && data.origin.size() <= 128))
-        && (!data.keys().hasAny(['yearOfProduction']) || (data.yearOfProduction is number) || (data.yearOfProduction is string && data.yearOfProduction.size() <= 16))
-        && (!data.keys().hasAny(['expiryGCP']) || (data.expiryGCP is string && data.expiryGCP.size() <= 32))
-        && (!data.keys().hasAny(['expiryGKD']) || (data.expiryGKD is string && data.expiryGKD.size() <= 32))
-        && (!data.keys().hasAny(['gcpIssueDate']) || (data.gcpIssueDate is string && data.gcpIssueDate.size() <= 32))
-        && (!data.keys().hasAny(['gcpPeriod']) || (data.gcpPeriod is number) || (data.gcpPeriod is string && data.gcpPeriod.size() <= 16))
-        && (!data.keys().hasAny(['gkdIssueDate']) || (data.gkdIssueDate is string && data.gkdIssueDate.size() <= 32))
-        && (!data.keys().hasAny(['gkdPeriod']) || (data.gkdPeriod is number) || (data.gkdPeriod is string && data.gkdPeriod.size() <= 16))
-        && (!data.keys().hasAny(['manager']) || (data.manager is string && data.manager.size() <= 128))
-        && (!data.keys().hasAny(['lastMaintenance']) || (data.lastMaintenance is string && data.lastMaintenance.size() <= 32))
-        && (!data.keys().hasAny(['maintenancePeriod']) || (data.maintenancePeriod is number) || (data.maintenancePeriod is string && data.maintenancePeriod.size() <= 16))
-        && (!data.keys().hasAny(['notes']) || (data.notes is string && data.notes.size() <= 4000))
-        && (!data.keys().hasAny(['noteDate']) || (data.noteDate is string && data.noteDate.size() <= 32))
-        && (!data.keys().hasAny(['notesList']) || (data.notesList is list && data.notesList.size() <= 200));
+        && (!('manufacturer' in data) || (data.manufacturer is string && data.manufacturer.size() <= 128))
+        && (!('origin' in data) || (data.origin is string && data.origin.size() <= 128))
+        && (!('yearOfProduction' in data) || data.yearOfProduction is number || (data.yearOfProduction is string && data.yearOfProduction.size() <= 16))
+        && (!('expiryGCP' in data) || (data.expiryGCP is string && data.expiryGCP.size() <= 32))
+        && (!('expiryGKD' in data) || (data.expiryGKD is string && data.expiryGKD.size() <= 32))
+        && (!('gcpIssueDate' in data) || (data.gcpIssueDate is string && data.gcpIssueDate.size() <= 32))
+        && (!('gcpPeriod' in data) || data.gcpPeriod is number || (data.gcpPeriod is string && data.gcpPeriod.size() <= 16))
+        && (!('gkdIssueDate' in data) || (data.gkdIssueDate is string && data.gkdIssueDate.size() <= 32))
+        && (!('gkdPeriod' in data) || data.gkdPeriod is number || (data.gkdPeriod is string && data.gkdPeriod.size() <= 16))
+        && (!('manager' in data) || (data.manager is string && data.manager.size() <= 128))
+        && (!('lastMaintenance' in data) || (data.lastMaintenance is string && data.lastMaintenance.size() <= 32))
+        && (!('maintenancePeriod' in data) || data.maintenancePeriod is number || (data.maintenancePeriod is string && data.maintenancePeriod.size() <= 16))
+        && (!('notes' in data) || (data.notes is string && data.notes.size() <= 4000))
+        && (!('noteDate' in data) || (data.noteDate is string && data.noteDate.size() <= 32))
+        && (!('notesList' in data) || (data.notesList is list && data.notesList.size() <= 200));
     }
 
     function isValidActivityLog(data) {
@@ -2659,31 +2659,31 @@ service cloud.firestore {
         && data.type is string && data.type.size() <= 32
         && data.categoryLabel is string && data.categoryLabel.size() <= 128
         && data.description is string && data.description.size() <= 2000
-        && (!data.keys().hasAny(['notes']) || (data.notes is string && data.notes.size() <= 4000));
+        && (!('notes' in data) || (data.notes is string && data.notes.size() <= 4000));
     }
 
     function isValidUserSettings(data) {
       return data.userId is string && data.userId.size() <= 128
         && data.userId == request.auth.uid
-        && (!data.keys().hasAny(['telegramBotToken']) || (data.telegramBotToken is string && data.telegramBotToken.size() <= 256))
-        && (!data.keys().hasAny(['telegramChatId']) || (data.telegramChatId is string && data.telegramChatId.size() <= 128))
-        && (!data.keys().hasAny(['telegramEnabled']) || (data.telegramEnabled is bool))
-        && (!data.keys().hasAny(['warningDaysGCP']) || (data.warningDaysGCP is number) || (data.warningDaysGCP is string))
-        && (!data.keys().hasAny(['warningDaysGKD']) || (data.warningDaysGKD is number) || (data.warningDaysGKD is string))
-        && (!data.keys().hasAny(['warningDaysBD']) || (data.warningDaysBD is number) || (data.warningDaysBD is string))
-        && (!data.keys().hasAny(['recipientEmail']) || (data.recipientEmail is string && data.recipientEmail.size() <= 256))
-        && (!data.keys().hasAny(['isSubscribed']) || (data.isSubscribed is bool))
-        && (!data.keys().hasAny(['hasSeeded']) || (data.hasSeeded is bool))
-        && (!data.keys().hasAny(['channels']) || (data.channels is map));
+        && (!('telegramBotToken' in data) || (data.telegramBotToken is string && data.telegramBotToken.size() <= 256))
+        && (!('telegramChatId' in data) || (data.telegramChatId is string && data.telegramChatId.size() <= 128))
+        && (!('telegramEnabled' in data) || (data.telegramEnabled is bool))
+        && (!('warningDaysGCP' in data) || (data.warningDaysGCP is number) || (data.warningDaysGCP is string))
+        && (!('warningDaysGKD' in data) || (data.warningDaysGKD is number) || (data.warningDaysGKD is string))
+        && (!('warningDaysBD' in data) || (data.warningDaysBD is number) || (data.warningDaysBD is string))
+        && (!('recipientEmail' in data) || (data.recipientEmail is string && data.recipientEmail.size() <= 256))
+        && (!('isSubscribed' in data) || (data.isSubscribed is bool))
+        && (!('hasSeeded' in data) || (data.hasSeeded is bool))
+        && (!('channels' in data) || (data.channels is map));
     }
 
     function isValidDriveConfig(data) {
       return data.id is string && data.id.size() <= 128
         && data.connected is bool
-        && (!data.keys().hasAny(['email']) || (data.email is string && data.email.size() <= 256))
-        && (!data.keys().hasAny(['accessToken']) || (data.accessToken is string && data.accessToken.size() <= 8192))
-        && (!data.keys().hasAny(['driveFolderIds']) || (data.driveFolderIds is map))
-        && (!data.keys().hasAny(['updatedAt']) || (data.updatedAt is string && data.updatedAt.size() <= 64));
+        && (!('email' in data) || (data.email is string && data.email.size() <= 256))
+        && (!('accessToken' in data) || (data.accessToken is string && data.accessToken.size() <= 8192))
+        && (!('driveFolderIds' in data) || (data.driveFolderIds is map))
+        && (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
     }
 
     match /test/{testId} {
@@ -2691,18 +2691,18 @@ service cloud.firestore {
     }
 
     match /devices/{deviceId} {
-      allow get: if isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.get('userId', '') == request.auth.uid);
-      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.get('userId', '') == request.auth.uid);
-      allow create: if isSignedIn() && isValidId(deviceId) && deviceId == incoming().id && isValidDevice(incoming());
-      allow update: if isSignedIn() && isValidId(deviceId) && isValidDevice(incoming()) && incoming().userId == resource.data.userId && incoming().id == resource.data.id;
-      allow delete: if isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.get('userId', '') == request.auth.uid);
+      allow get: if isSignedIn() && (resource.data.userId == request.auth.uid || !('userId' in resource.data));
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(deviceId) && incoming().id == deviceId && isValidDevice(incoming());
+      allow update: if isSignedIn() && isValidId(deviceId) && isValidDevice(incoming()) && incoming().userId == request.auth.uid;
+      allow delete: if isSignedIn() && (resource.data.userId == request.auth.uid || !('userId' in resource.data));
     }
 
     match /activityLogs/{logId} {
-      allow get: if isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.get('userId', '') == request.auth.uid);
-      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.get('userId', '') == request.auth.uid);
-      allow create: if isSignedIn() && isValidId(logId) && logId == incoming().id && isValidActivityLog(incoming());
-      allow delete: if isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.get('userId', '') == request.auth.uid);
+      allow get: if isSignedIn() && (resource.data.userId == request.auth.uid || !('userId' in resource.data));
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(logId) && incoming().id == logId && isValidActivityLog(incoming());
+      allow delete: if isSignedIn() && (resource.data.userId == request.auth.uid || !('userId' in resource.data));
       allow update: if false;
     }
 
