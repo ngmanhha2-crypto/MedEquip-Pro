@@ -30,8 +30,21 @@ import {
   Loader2,
   Send,
   RefreshCw,
-  HelpCircle
+  HelpCircle,
+  Database,
+  AlertTriangle,
+  Copy,
+  Check,
+  Eye,
+  EyeOff,
+  UserPlus,
+  LogIn,
+  Info,
+  BarChart3,
+  TrendingUp,
+  Activity
 } from 'lucide-react';
+import { DeviceStatsCharts } from './DeviceStatsCharts';
 import { MOCK_DEVICES } from '../mockData';
 import { Device, DeviceNote, ActivityLog } from '../types';
 import { getDaysRemaining, getStatusColor, formatDisplayDate, checkReminders, calculateExpiryFromIssue } from '../utils/dateUtils';
@@ -70,6 +83,9 @@ import {
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
   signOut as firebaseSignOut,
+  sendPasswordResetEmail,
+  signInWithPopup,
+  GoogleAuthProvider,
   User as FirebaseUser
 } from 'firebase/auth';
 
@@ -99,7 +115,7 @@ const DeviceDashboard: React.FC = () => {
   const [editingDevice, setEditingDevice] = useState<Device | null>(null);
   const [selectedHistoryDevice, setSelectedHistoryDevice] = useState<Device | null>(null);
   const [selectedNoteDevice, setSelectedNoteDevice] = useState<Device | null>(null);
-  const [activeTab, setActiveTab] = useState<'inventory' | 'maintenance' | 'legal' | 'settings'>('inventory');
+  const [activeTab, setActiveTab] = useState<'inventory' | 'charts' | 'maintenance' | 'legal' | 'settings'>('inventory');
 
   // Custom warning thresholds configuration days (Giấy phép GCP, Kiểm định GKĐ, Bảo dưỡng BD)
   const [warningDaysGCP, setWarningDaysGCP] = useState<number>(() => {
@@ -178,9 +194,36 @@ const DeviceDashboard: React.FC = () => {
   // Primary Email/Password Auth States
   const [appUser, setAppUser] = useState<FirebaseUser | null>(null);
   const [isAuthChecking, setIsAuthChecking] = useState(true);
-  const [authEmail, setAuthEmail] = useState('');
+  const [authEmail, setAuthEmail] = useState(() => {
+    return localStorage.getItem('medequip_last_login_email') || '';
+  });
   const [authPassword, setAuthPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [isRegisterScreen, setIsRegisterScreen] = useState(false);
+  const [authError, setAuthError] = useState<{
+    type: 'error' | 'warning' | 'success' | 'info';
+    title: string;
+    text: string;
+    action?: {
+      label: string;
+      onClick: () => void;
+    };
+  } | null>(null);
+
+  // In-app toast notification state
+  const [toastNotification, setToastNotification] = useState<{
+    id: string;
+    message: string;
+    type: 'success' | 'error' | 'warning' | 'info';
+  } | null>(null);
+
+  const showToast = (message: string, type: 'success' | 'error' | 'warning' | 'info' = 'info') => {
+    const id = Math.random().toString(36).substring(2, 9);
+    setToastNotification({ id, message, type });
+    setTimeout(() => {
+      setToastNotification(prev => prev?.id === id ? null : prev);
+    }, 4500);
+  };
   const [driveFiles, setDriveFiles] = useState<Record<string, DriveFile[]>>(() => {
     try {
       const saved = localStorage.getItem('medequip_saved_drive_files');
@@ -246,6 +289,9 @@ const DeviceDashboard: React.FC = () => {
 
   const [showAuthDomainError, setShowAuthDomainError] = useState(false);
   const [failedDomain, setFailedDomain] = useState('');
+  const [showFirestoreRulesModal, setShowFirestoreRulesModal] = useState(false);
+  const [firestorePermissionError, setFirestorePermissionError] = useState(false);
+  const [syncCounter, setSyncCounter] = useState(0);
   const [confirmDialog, setConfirmDialog] = useState<{
     isOpen: boolean;
     title: string;
@@ -362,15 +408,15 @@ const DeviceDashboard: React.FC = () => {
         setIsDriveConnected(true);
         setDriveUserEmail(res.email || 'Người dùng Google');
         setDriveFolderIds({});
-        alert('Kênh lưu trữ Google Drive đã được kết nối thành công!');
+        showToast('Kênh lưu trữ Google Drive đã được kết nối thành công!', 'success');
       }
     } catch (err: any) {
-      console.error('Lỗi khi đăng nhập Google:', err);
+      console.warn('Lỗi khi đăng nhập Google Drive:', err);
       if (err.message && (err.message.includes("auth/unauthorized-domain") || err.code === "auth/unauthorized-domain" || String(err).includes("unauthorized-domain"))) {
         setFailedDomain(window.location.hostname);
         setShowAuthDomainError(true);
       } else {
-        alert(`Đăng nhập Google Drive thất bại: ${err.message || err}`);
+        showToast(`Đăng nhập Google Drive thất bại: ${err.message || err}`, 'error');
       }
     } finally {
       setAuthLoading(false);
@@ -380,7 +426,7 @@ const DeviceDashboard: React.FC = () => {
   const handleDisconnectDrive = async () => {
     askConfirmation(
       'Ngắt kết nối Google Drive',
-      'Bạn có chắc chắn muốn ngắt kết nối Google Drive? Các tệp tài học lý sẽ tạm thời hiển thị ở trạng thái ngoại tuyến.',
+      'Bạn có chắc chắn muốn ngắt kết nối Google Drive? Các tệp tài liệu sẽ tạm thời hiển thị ở trạng thái ngoại tuyến.',
       async () => {
         setAuthLoading(true);
         try {
@@ -393,9 +439,9 @@ const DeviceDashboard: React.FC = () => {
             connected: false,
             driveFolderIds: {}
           });
-          console.log("Đã cập nhật ngắt kết nối Google Drive đồng bộ dùng chung trên Firestore.");
+          showToast('Đã ngắt kết nối Google Drive.', 'info');
         } catch (err: any) {
-          alert(`Lỗi khi đăng xuất: ${err.message || err}`);
+          showToast(`Lỗi khi đăng xuất: ${err.message || err}`, 'error');
         } finally {
           setAuthLoading(false);
         }
@@ -414,8 +460,9 @@ const DeviceDashboard: React.FC = () => {
           setIsAuthChecking(true);
           await firebaseSignOut(auth);
           setDevices([]);
+          showToast('Đã đăng xuất khỏi hệ thống.', 'info');
         } catch (err: any) {
-          alert(`Đăng xuất thất bại: ${err.message}`);
+          showToast(`Đăng xuất thất bại: ${err.message}`, 'error');
         } finally {
           setIsAuthChecking(false);
         }
@@ -427,31 +474,151 @@ const DeviceDashboard: React.FC = () => {
 
   const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!authEmail || !authPassword) {
-      alert('Vui lòng điền đầy đủ tài khoản và mật khẩu!');
+    setAuthError(null);
+    const emailToUse = authEmail.trim();
+    if (!emailToUse || !authPassword) {
+      setAuthError({
+        type: 'warning',
+        title: 'Thiếu thông tin',
+        text: 'Vui lòng điền đầy đủ tài khoản email và mật khẩu!'
+      });
       return;
     }
     setAuthLoading(true);
     try {
       if (isRegisterScreen) {
-        await createUserWithEmailAndPassword(auth, authEmail, authPassword);
-        alert('Tạo tài khoản quản trị thành công!');
+        await createUserWithEmailAndPassword(auth, emailToUse, authPassword);
+        localStorage.setItem('medequip_last_login_email', emailToUse);
+        showToast('Tạo tài khoản quản trị thành công!', 'success');
       } else {
-        await signInWithEmailAndPassword(auth, authEmail, authPassword);
+        await signInWithEmailAndPassword(auth, emailToUse, authPassword);
+        localStorage.setItem('medequip_last_login_email', emailToUse);
+        showToast('Đăng nhập thành công!', 'success');
       }
     } catch (err: any) {
-      console.error(err);
-      let errorMsg = err.message || String(err);
-      if (errorMsg.includes("auth/invalid-credential")) {
-        errorMsg = "Sai email hoặc mật khẩu. Vui lòng kiểm tra lại!";
-      } else if (errorMsg.includes("auth/weak-password")) {
-        errorMsg = "Mật khẩu quá yếu (tối thiểu 6 ký tự).";
-      } else if (errorMsg.includes("auth/email-already-in-use")) {
-        errorMsg = "Email này đã được sử dụng bởi một tài khoản khác.";
-      } else if (errorMsg.includes("auth/operation-not-allowed") || errorMsg.includes("operation-not-allowed")) {
-        errorMsg = "Phương thức đăng nhập bằng Email/Mật khẩu (Email/Password) hiện đang bị tắt trong cấu hình Firebase của dự án.\n\nCách kích hoạt rất dễ dàng:\n\n1️⃣ Bước 1: Hãy truy cập vào trang quản trị Firebase Console bằng đường dẫn dưới đây:\n👉 https://console.firebase.google.com/\n\n2️⃣ Bước 2: Chọn dự án Firebase của bạn, sau đó vào phần \"Build\" -> \"Authentication\" -> chọn tab \"Sign-in method\".\n\n3️⃣ Bước 3: Tìm mục \"Email/Password\" dưới phần \"Sign-in providers\", nhấp vào nút Chỉnh sửa (Edit) và kích hoạt trạng thái \"Bật\" (Enable) rồi bấm Lưu (Save).\n\n4️⃣ Bước 4: Quay lại ứng dụng này, tải lại trang và tiến hành đăng ký/đăng nhập lại tài khoản!";
+      const code = err?.code || '';
+      const msg = err?.message || String(err);
+      
+      // Use console.warn for expected client auth failures to prevent test/error triggers
+      console.warn('Firebase Auth notice:', code || msg);
+
+      if (code === 'auth/invalid-credential' || msg.includes('auth/invalid-credential') || code === 'auth/user-not-found' || code === 'auth/wrong-password') {
+        setAuthError({
+          type: 'warning',
+          title: 'Thông tin tài khoản chưa chính xác',
+          text: 'Email hoặc mật khẩu không khớp. Nếu đây là lần đầu truy cập hoặc bạn chưa tạo tài khoản này, vui lòng bấm vào nút Đăng ký ngay bên dưới để sử dụng.',
+          action: {
+            label: '👉 Bấm vào đây để Đăng ký tài khoản mới',
+            onClick: () => {
+              setIsRegisterScreen(true);
+              setAuthError(null);
+            }
+          }
+        });
+      } else if (code === 'auth/email-already-in-use' || msg.includes('auth/email-already-in-use')) {
+        setAuthError({
+          type: 'info',
+          title: 'Email đã được đăng ký',
+          text: 'Tài khoản với địa chỉ email này đã tồn tại trên hệ thống. Bạn có thể đăng nhập hoặc đặt lại mật khẩu.',
+          action: {
+            label: '👉 Chuyển sang Đăng nhập',
+            onClick: () => {
+              setIsRegisterScreen(false);
+              setAuthError(null);
+            }
+          }
+        });
+      } else if (code === 'auth/weak-password' || msg.includes('auth/weak-password')) {
+        setAuthError({
+          type: 'warning',
+          title: 'Mật khẩu chưa đủ mạnh',
+          text: 'Mật khẩu bảo mật cần tối thiểu 6 ký tự để bảo vệ an toàn cho hệ thống.'
+        });
+      } else if (code === 'auth/too-many-requests' || msg.includes('auth/too-many-requests')) {
+        setAuthError({
+          type: 'warning',
+          title: 'Tạm thời bị khóa do thử quá nhiều lần',
+          text: 'Hệ thống tạm khóa do nhập sai nhiều lần liên tiếp. Vui lòng đợi trong giây lát hoặc sử dụng tính năng Quên mật khẩu.'
+        });
+      } else if (code === 'auth/operation-not-allowed' || msg.includes('operation-not-allowed')) {
+        setAuthError({
+          type: 'error',
+          title: 'Phương thức Email/Password chưa bật',
+          text: 'Phương thức Email/Password hiện chưa được bật trong Firebase Console. Bạn có thể sử dụng nút Đăng nhập nhanh bằng Google bên dưới hoặc bật Email/Password trong Firebase Console.'
+        });
+      } else {
+        setAuthError({
+          type: 'error',
+          title: 'Lỗi xác thực',
+          text: msg
+        });
       }
-      alert(`Lỗi xác thực: ${errorMsg}`);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    setAuthLoading(true);
+    setAuthError(null);
+    try {
+      const googleProvider = new GoogleAuthProvider();
+      googleProvider.setCustomParameters({ prompt: 'select_account' });
+      await signInWithPopup(auth, googleProvider);
+      showToast('Đăng nhập bằng tài khoản Google thành công!', 'success');
+    } catch (err: any) {
+      console.warn('Google Sign-in notice:', err);
+      const code = err?.code || '';
+      const msg = err?.message || String(err);
+      if (code === 'auth/popup-closed-by-user' || msg.includes('popup-closed-by-user')) {
+        setAuthError({
+          type: 'info',
+          title: 'Cửa sổ đăng nhập đã đóng',
+          text: 'Bạn đã đóng cửa sổ đăng nhập Google trước khi hoàn tất.'
+        });
+      } else if (code === 'auth/cancelled-popup-request') {
+        // Safe to ignore duplicate requests
+      } else if (code === 'auth/unauthorized-domain' || msg.includes('unauthorized-domain')) {
+        setFailedDomain(window.location.hostname);
+        setShowAuthDomainError(true);
+      } else {
+        setAuthError({
+          type: 'error',
+          title: 'Không thể đăng nhập bằng Google',
+          text: msg
+        });
+      }
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    const emailToUse = authEmail.trim();
+    if (!emailToUse) {
+      setAuthError({
+        type: 'warning',
+        title: 'Chưa nhập Email',
+        text: 'Vui lòng nhập địa chỉ email của bạn vào ô trên để nhận đường dẫn đặt lại mật khẩu.'
+      });
+      return;
+    }
+    setAuthLoading(true);
+    setAuthError(null);
+    try {
+      await sendPasswordResetEmail(auth, emailToUse);
+      setAuthError({
+        type: 'success',
+        title: 'Đã gửi email khôi phục!',
+        text: `Liên kết đặt lại mật khẩu đã được gửi đến ${emailToUse}. Vui lòng kiểm tra hộp thư đến (hoặc hòm thư rác/spam).`
+      });
+    } catch (err: any) {
+      console.warn('Password reset notice:', err);
+      setAuthError({
+        type: 'error',
+        title: 'Không thể gửi email đặt lại mật khẩu',
+        text: 'Vui lòng kiểm tra lại địa chỉ email hoặc thử lại sau.'
+      });
     } finally {
       setAuthLoading(false);
     }
@@ -472,7 +639,11 @@ const DeviceDashboard: React.FC = () => {
     const deviceObj = devices.find(d => d.id === id);
     if (deviceObj && auth.currentUser) {
       const updatedDevice = { ...deviceObj, notes: notesValue, noteDate: noteDateValue, notesList };
-      await updateDeviceInFirestore(auth.currentUser.uid, updatedDevice);
+      try {
+        await updateDeviceInFirestore(auth.currentUser.uid, updatedDevice);
+      } catch (err) {
+        console.warn("Lỗi khi cập nhật ghi chú lên Firestore:", err);
+      }
     }
 
     const deviceName = deviceObj?.name || 'Thiết bị';
@@ -490,7 +661,11 @@ const DeviceDashboard: React.FC = () => {
     };
     setActivityLogs(prev => [newAutoLog, ...prev]);
     if (auth.currentUser) {
-      await saveActivityLogToFirestore(auth.currentUser.uid, newAutoLog);
+      try {
+        await saveActivityLogToFirestore(auth.currentUser.uid, newAutoLog);
+      } catch (err) {
+        console.warn("Lỗi khi lưu nhật ký ghi chú lên Firestore:", err);
+      }
     }
   };
 
@@ -596,6 +771,7 @@ const DeviceDashboard: React.FC = () => {
 
           const firestoreDevices = await fetchDevicesFromFirestore(currentUser.uid);
           if (!active) return;
+          setFirestorePermissionError(false);
 
           const isAlreadySeeded = firestoreSettings && firestoreSettings.hasSeeded === true;
 
@@ -676,7 +852,14 @@ const DeviceDashboard: React.FC = () => {
             }
           }
         } catch (err: any) {
-          console.error("Lỗi khi đồng bộ dữ liệu Firestore:", err);
+          console.warn("Lỗi khi đồng bộ dữ liệu Firestore (chuyển sang chế độ lưu trữ cục bộ):", err);
+          if (active) {
+            const errStr = String(err?.message || err);
+            if (errStr.includes('permission-denied') || errStr.includes('Missing or insufficient permissions')) {
+              setFirestorePermissionError(true);
+            }
+            setDevices(prev => (prev && prev.length > 0 ? prev : MOCK_DEVICES));
+          }
         } finally {
           if (active) setLoadingData(false);
         }
@@ -721,7 +904,7 @@ const DeviceDashboard: React.FC = () => {
     return () => {
       active = false;
     };
-  }, [appUser]);
+  }, [appUser, syncCounter]);
 
   // Lifted Automated scan for files and document names in all folders (only once per connection status per page load)
   const triggerAutoScan = async () => {
@@ -1100,7 +1283,7 @@ const DeviceDashboard: React.FC = () => {
       }
 
       if (auth.currentUser) {
-        updateDeviceInFirestore(auth.currentUser.uid, updatedDevice).catch(console.error);
+        updateDeviceInFirestore(auth.currentUser.uid, updatedDevice).catch(err => console.warn("Lỗi lưu thiết bị Firestore:", err));
       }
       
       // Auto-notify on Telegram
@@ -1118,7 +1301,7 @@ const DeviceDashboard: React.FC = () => {
       };
       setActivityLogs(prev => [newAutoLog, ...prev]);
       if (auth.currentUser) {
-        saveActivityLogToFirestore(auth.currentUser.uid, newAutoLog).catch(console.error);
+        saveActivityLogToFirestore(auth.currentUser.uid, newAutoLog).catch(err => console.warn("Lỗi lưu nhật ký Firestore:", err));
       }
     } else {
       const generatedId = Math.random().toString(36).substr(2, 9);
@@ -1151,7 +1334,7 @@ const DeviceDashboard: React.FC = () => {
       }
 
       if (auth.currentUser) {
-        saveDeviceToFirestore(auth.currentUser.uid, newDevice).catch(console.error);
+        saveDeviceToFirestore(auth.currentUser.uid, newDevice).catch(err => console.warn("Lỗi lưu thiết bị mới Firestore:", err));
       }
 
       // Auto-notify on Telegram
@@ -1169,7 +1352,7 @@ const DeviceDashboard: React.FC = () => {
       };
       setActivityLogs(prev => [newAutoLog, ...prev]);
       if (auth.currentUser) {
-        saveActivityLogToFirestore(auth.currentUser.uid, newAutoLog).catch(console.error);
+        saveActivityLogToFirestore(auth.currentUser.uid, newAutoLog).catch(err => console.warn("Lỗi lưu nhật ký mới Firestore:", err));
       }
     }
   };
@@ -1362,7 +1545,7 @@ const DeviceDashboard: React.FC = () => {
   // Auto-sync all settings to Firestore (Debounced)
   React.useEffect(() => {
     const currentUser = auth.currentUser;
-    if (!currentUser || loadingData) return;
+    if (!currentUser || loadingData || firestorePermissionError) return;
 
     const timer = setTimeout(async () => {
       try {
@@ -1394,13 +1577,14 @@ const DeviceDashboard: React.FC = () => {
     recipientEmail,
     isSubscribed,
     channels,
-    loadingData
+    loadingData,
+    firestorePermissionError
   ]);
 
   // Auto-sync Google Drive configurations & folder mappings to Firestore for cross-account & cross-device persistence
   React.useEffect(() => {
     const currentUser = auth.currentUser;
-    if (!currentUser || loadingData) return;
+    if (!currentUser || loadingData || firestorePermissionError) return;
 
     // CHỈ tự động lưu/đồng bộ cấu hình nếu isDriveConnected là true (đang kết nối).
     // Tuyệt đối không tự động ghi đè ngắt kết nối lên Firestore khi đang tải dữ liệu hoặc do chuyển đổi thiết bị mới có isDriveConnected tạm thời là false.
@@ -1425,7 +1609,7 @@ const DeviceDashboard: React.FC = () => {
 
       return () => clearTimeout(timer);
     }
-  }, [isDriveConnected, driveUserEmail, driveFolderIds, loadingData]);
+  }, [isDriveConnected, driveUserEmail, driveFolderIds, loadingData, firestorePermissionError]);
 
   if (isAuthChecking) {
     return (
@@ -1449,32 +1633,104 @@ const DeviceDashboard: React.FC = () => {
           transition={{ duration: 0.6 }}
           className="w-full max-w-md bg-white border border-slate-100 rounded-3xl shadow-xl overflow-hidden p-8 z-10"
         >
-          <div className="text-center mb-8">
+          <div className="text-center mb-6">
             <img 
               src="/logo.svg" 
               alt="MedEquip Pro Logo" 
-              className="mx-auto w-14 h-14 rounded-2xl shadow-lg shadow-blue-500/25 mb-4 object-contain" 
+              className="mx-auto w-14 h-14 rounded-2xl shadow-lg shadow-blue-500/25 mb-3 object-contain" 
             />
             <h1 className="text-2xl font-black text-slate-900 tracking-tight leading-tight">MedEquip Pro</h1>
-            <p className="text-sm text-slate-500 mt-1.5 font-medium">Hệ thống Quản lý Thiết bị Y tế & X-Quang</p>
+            <p className="text-xs text-slate-500 mt-1 font-medium">Hệ thống Quản lý Thiết bị Y tế & X-Quang</p>
           </div>
 
-          <div className="flex border-b border-slate-100 mb-6 font-semibold">
+          {/* Quick Google Sign-In */}
+          <div className="mb-4">
             <button
-              onClick={() => setIsRegisterScreen(false)}
-              className={`flex-1 pb-3 text-sm text-center border-b-2 transition-all cursor-pointer ${!isRegisterScreen ? 'text-blue-600 border-blue-600 font-bold' : 'text-slate-400 border-transparent hover:text-slate-600'}`}
+              type="button"
+              onClick={handleGoogleSignIn}
+              disabled={authLoading}
+              className="w-full py-3 px-4 bg-white border border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold rounded-xl text-sm transition-all flex items-center justify-center gap-3 shadow-xs cursor-pointer disabled:opacity-50"
+            >
+              <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24">
+                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
+                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+              </svg>
+              <span>Đăng nhập nhanh bằng Google</span>
+            </button>
+          </div>
+
+          <div className="relative my-4">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-slate-200"></div>
+            </div>
+            <div className="relative flex justify-center text-[10px] uppercase font-bold tracking-wider text-slate-400">
+              <span className="bg-white px-2">Hoặc tài khoản Email</span>
+            </div>
+          </div>
+
+          <div className="flex border-b border-slate-100 mb-5 font-semibold">
+            <button
+              onClick={() => {
+                setIsRegisterScreen(false);
+                setAuthError(null);
+              }}
+              className={`flex-1 pb-3 text-xs uppercase tracking-wider text-center border-b-2 transition-all cursor-pointer ${!isRegisterScreen ? 'text-blue-600 border-blue-600 font-bold' : 'text-slate-400 border-transparent hover:text-slate-600'}`}
               type="button"
             >
               Đăng nhập
             </button>
             <button
-              onClick={() => setIsRegisterScreen(true)}
-              className={`flex-1 pb-3 text-sm text-center border-b-2 transition-all cursor-pointer ${isRegisterScreen ? 'text-blue-600 border-blue-600 font-bold' : 'text-slate-400 border-transparent hover:text-slate-600'}`}
+              onClick={() => {
+                setIsRegisterScreen(true);
+                setAuthError(null);
+              }}
+              className={`flex-1 pb-3 text-xs uppercase tracking-wider text-center border-b-2 transition-all cursor-pointer ${isRegisterScreen ? 'text-blue-600 border-blue-600 font-bold' : 'text-slate-400 border-transparent hover:text-slate-600'}`}
               type="button"
             >
               Đăng ký tài khoản
             </button>
           </div>
+
+          {/* Auth Notification / Error Box */}
+          {authError && (
+            <motion.div
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              className={`p-3.5 rounded-2xl mb-4 text-xs space-y-1.5 border ${
+                authError.type === 'error'
+                  ? 'bg-rose-50 border-rose-200 text-rose-800'
+                  : authError.type === 'warning'
+                  ? 'bg-amber-50 border-amber-200 text-amber-800'
+                  : authError.type === 'success'
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                  : 'bg-blue-50 border-blue-200 text-blue-800'
+              }`}
+            >
+              <div className="flex items-center gap-2 font-bold">
+                {authError.type === 'error' && <AlertCircle size={15} className="shrink-0 text-rose-600" />}
+                {authError.type === 'warning' && <AlertTriangle size={15} className="shrink-0 text-amber-600" />}
+                {authError.type === 'success' && <CheckCircle2 size={15} className="shrink-0 text-emerald-600" />}
+                {authError.type === 'info' && <Info size={15} className="shrink-0 text-blue-600" />}
+                <span>{authError.title}</span>
+              </div>
+              <p className="leading-relaxed text-[11px] opacity-90 pl-5">
+                {authError.text}
+              </p>
+              {authError.action && (
+                <div className="pt-1 pl-5">
+                  <button
+                    type="button"
+                    onClick={authError.action.onClick}
+                    className="font-bold underline cursor-pointer hover:opacity-80 text-[11px]"
+                  >
+                    {authError.action.label}
+                  </button>
+                </div>
+              )}
+            </motion.div>
+          )}
 
           <form onSubmit={handleAuthSubmit} className="space-y-4">
             <div>
@@ -1484,21 +1740,48 @@ const DeviceDashboard: React.FC = () => {
                 required
                 placeholder="bacsi@benhvien.vn"
                 value={authEmail}
-                onChange={(e) => setAuthEmail(e.target.value)}
+                onChange={(e) => {
+                  setAuthEmail(e.target.value);
+                  if (authError) setAuthError(null);
+                }}
                 className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm transition-all bg-slate-50 focus:bg-white"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-2">Mật khẩu</label>
-              <input
-                type="password"
-                required
-                placeholder="••••••••"
-                value={authPassword}
-                onChange={(e) => setAuthPassword(e.target.value)}
-                className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm transition-all bg-slate-50 focus:bg-white"
-              />
+              <div className="flex items-center justify-between mb-2">
+                <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider">Mật khẩu</label>
+                {!isRegisterScreen && (
+                  <button
+                    type="button"
+                    onClick={handleForgotPassword}
+                    className="text-[11px] text-blue-600 hover:underline font-semibold cursor-pointer"
+                  >
+                    Quên mật khẩu?
+                  </button>
+                )}
+              </div>
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  required
+                  placeholder="••••••••"
+                  value={authPassword}
+                  onChange={(e) => {
+                    setAuthPassword(e.target.value);
+                    if (authError) setAuthError(null);
+                  }}
+                  className="w-full pl-4 pr-11 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm transition-all bg-slate-50 focus:bg-white"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 rounded-lg cursor-pointer"
+                  tabIndex={-1}
+                >
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
             </div>
 
             <button
@@ -1508,17 +1791,50 @@ const DeviceDashboard: React.FC = () => {
             >
               {authLoading ? (
                 <Loader2 className="animate-spin" size={16} />
-              ) : null}
+              ) : isRegisterScreen ? (
+                <UserPlus size={16} />
+              ) : (
+                <LogIn size={16} />
+              )}
               <span>{isRegisterScreen ? 'Tạo tài khoản' : 'Vào hệ thống'}</span>
             </button>
           </form>
 
-          <div className="mt-6 flex flex-col items-center gap-2 border-t border-slate-100 pt-6">
+          <div className="mt-6 flex flex-col items-center gap-2 border-t border-slate-100 pt-5">
             <p className="text-[11px] text-slate-400 text-center leading-relaxed">
-              Dữ liệu của bạn được đồng bộ đám mây và bảo vệ bằng mật khẩu. Thư mục Google Drive lưu trữ hồ sơ tài liệu pháp lý được kết nối riêng độc lập.
+              Dữ liệu của bạn được đồng bộ đám mây và bảo vệ theo từng tài khoản. Kênh Google Drive lưu trữ hồ sơ tài liệu được liên kết an toàn.
             </p>
           </div>
         </motion.div>
+
+        {/* Global Toast Notification */}
+        {toastNotification && (
+          <div className="fixed bottom-6 right-6 z-50">
+            <motion.div
+              initial={{ opacity: 0, y: 15, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className={`p-4 rounded-2xl shadow-xl flex items-center gap-3 border text-xs font-semibold ${
+                toastNotification.type === 'success'
+                  ? 'bg-emerald-900 text-emerald-100 border-emerald-700'
+                  : toastNotification.type === 'error'
+                  ? 'bg-rose-900 text-rose-100 border-rose-700'
+                  : 'bg-slate-900 text-slate-100 border-slate-700'
+              }`}
+            >
+              {toastNotification.type === 'success' && <CheckCircle2 size={16} className="text-emerald-400" />}
+              {toastNotification.type === 'error' && <AlertCircle size={16} className="text-rose-400" />}
+              {toastNotification.type === 'info' && <Info size={16} className="text-blue-400" />}
+              <span>{toastNotification.message}</span>
+              <button 
+                onClick={() => setToastNotification(null)}
+                className="ml-2 text-slate-400 hover:text-white"
+              >
+                <X size={14} />
+              </button>
+            </motion.div>
+          </div>
+        )}
       </div>
     );
   }
@@ -1541,6 +1857,7 @@ const DeviceDashboard: React.FC = () => {
         <nav className="flex-1 p-4 space-y-2">
           <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 px-2">Phòng X-Quang</div>
           <SidebarLink active={activeTab === 'inventory'} onClick={() => setActiveTab('inventory')} icon={<LayoutDashboard size={20} />} label="Danh mục thiết bị" />
+          <SidebarLink active={activeTab === 'charts'} onClick={() => setActiveTab('charts')} icon={<BarChart3 size={20} />} label="Biểu đồ thống kê" />
           <SidebarLink active={activeTab === 'maintenance'} onClick={() => setActiveTab('maintenance')} icon={<Calendar size={20} />} label="Lịch bảo trì" />
           <SidebarLink active={activeTab === 'legal'} onClick={() => setActiveTab('legal')} icon={<ShieldCheck size={20} />} label="Hồ sơ pháp lý" />
           <SidebarLink active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} icon={<Settings size={20} />} label="Cài đặt hệ thống" />
@@ -1668,6 +1985,39 @@ const DeviceDashboard: React.FC = () => {
           </div>
         </header>
 
+        {/* Firestore Permission Banner */}
+        {firestorePermissionError && (
+          <div className="bg-amber-50 border-b border-amber-200 px-8 py-3 flex flex-wrap items-center justify-between gap-3 text-xs text-amber-900 shrink-0">
+            <div className="flex items-center gap-2.5">
+              <AlertTriangle className="text-amber-600 shrink-0" size={18} />
+              <span>
+                <strong>Đồng bộ đám mây Firestore:</strong> Firebase Console đang chặn quyền truy cập (Permission Denied) cho dự án <code className="bg-amber-100 text-amber-900 px-1.5 py-0.5 rounded font-mono font-bold">quanlythietbiyte-babd8</code>. Dữ liệu hiện được lưu trữ an toàn cục bộ.
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowFirestoreRulesModal(true)}
+                className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl transition-colors cursor-pointer text-xs shadow-xs inline-flex items-center gap-1.5"
+              >
+                <ShieldCheck size={14} />
+                Xem Rules & Hướng dẫn
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setLoadingData(true);
+                  setFirestorePermissionError(false);
+                  setSyncCounter(c => c + 1);
+                }}
+                className="px-3 py-1.5 bg-white hover:bg-amber-100 border border-amber-300 text-amber-800 font-semibold rounded-xl transition-colors cursor-pointer text-xs"
+              >
+                Thử kết nối lại
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Content Body */}
         <div className="flex-1 p-8 overflow-hidden flex flex-col gap-6">
           {activeTab === 'inventory' ? (
@@ -1692,6 +2042,37 @@ const DeviceDashboard: React.FC = () => {
                   value={stats.ok} 
                   highlightColor="text-green-600" 
                 />
+              </div>
+
+              {/* Analytics & Recharts Charts Banner Widget */}
+              <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-blue-950 text-white rounded-2xl p-4 px-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm shrink-0">
+                <div className="flex items-center gap-3.5">
+                  <div className="p-2.5 bg-blue-500/20 text-blue-400 border border-blue-400/30 rounded-xl shrink-0">
+                    <BarChart3 size={20} className="stroke-[2.5]" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h4 className="text-xs font-bold tracking-tight text-white uppercase">
+                        Biểu đồ Thống kê Hạn Kiểm định & Bảo trì (Recharts)
+                      </h4>
+                      <span className="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase bg-blue-500/30 text-blue-300 border border-blue-400/30">
+                        Trực quan
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-300 mt-0.5 leading-relaxed">
+                      Theo dõi trực quan số ngày còn lại đến hạn kiểm định, biểu đồ tròn tỉ lệ an toàn và danh sách máy cần bảo trì khẩn cấp.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('charts')}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl transition-all shadow-sm shadow-blue-500/30 cursor-pointer inline-flex items-center gap-2 shrink-0 self-start sm:self-auto hover:scale-[1.02] active:scale-[0.98]"
+                >
+                  <BarChart3 size={14} />
+                  <span>Mở biểu đồ phân tích</span>
+                  <ChevronRight size={14} />
+                </button>
               </div>
 
               {!isDriveConnected && (
@@ -1813,11 +2194,24 @@ const DeviceDashboard: React.FC = () => {
                 </div>
               </div>
             </>
+          ) : activeTab === 'charts' ? (
+            <DeviceStatsCharts 
+              devices={devices}
+              warningDaysGCP={warningDaysGCP}
+              warningDaysGKD={warningDaysGKD}
+              warningDaysBD={warningDaysBD}
+              onSelectDevice={(d) => {
+                setEditingDevice(d);
+                setIsModalOpen(true);
+              }}
+              onConfirmDone={handleConfirmDone}
+            />
           ) : activeTab === 'maintenance' ? (
             <MaintenanceSchedule 
               devices={devices} 
               warningDaysBD={warningDaysBD} 
               activityLogs={activityLogs}
+              onOpenCharts={() => setActiveTab('charts')}
             />
           ) : activeTab === 'settings' ? (
             <SettingsPanel 
@@ -1853,6 +2247,13 @@ const DeviceDashboard: React.FC = () => {
               setIsSubscribed={setIsSubscribed}
               channels={channels}
               setChannels={setChannels}
+              onOpenFirestoreRulesModal={() => setShowFirestoreRulesModal(true)}
+              firestorePermissionError={firestorePermissionError}
+              onRetryFirestoreSync={() => {
+                setLoadingData(true);
+                setFirestorePermissionError(false);
+                setSyncCounter(c => c + 1);
+              }}
             />
           ) : (
             <LegalDocumentsPanel 
@@ -1998,6 +2399,18 @@ const DeviceDashboard: React.FC = () => {
         domain={failedDomain}
       />
 
+      {/* Firestore Security Rules Guidance Modal */}
+      <FirestoreRulesModal
+        isOpen={showFirestoreRulesModal}
+        onClose={() => setShowFirestoreRulesModal(false)}
+        onRetry={() => {
+          setShowFirestoreRulesModal(false);
+          setLoadingData(true);
+          setFirestorePermissionError(false);
+          setSyncCounter(c => c + 1);
+        }}
+      />
+
       {/* Custom Confirmation Modal Portal */}
       <CustomConfirmationModal
         isOpen={confirmDialog.isOpen}
@@ -2009,6 +2422,35 @@ const DeviceDashboard: React.FC = () => {
         onConfirm={confirmDialog.onConfirm}
         onCancel={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
       />
+
+      {/* Global Toast Notification */}
+      {toastNotification && (
+        <div className="fixed bottom-6 right-6 z-50">
+          <motion.div
+            initial={{ opacity: 0, y: 15, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className={`p-4 rounded-2xl shadow-xl flex items-center gap-3 border text-xs font-semibold ${
+              toastNotification.type === 'success'
+                ? 'bg-emerald-900 text-emerald-100 border-emerald-700'
+                : toastNotification.type === 'error'
+                ? 'bg-rose-900 text-rose-100 border-rose-700'
+                : 'bg-slate-900 text-slate-100 border-slate-700'
+            }`}
+          >
+            {toastNotification.type === 'success' && <CheckCircle2 size={16} className="text-emerald-400" />}
+            {toastNotification.type === 'error' && <AlertCircle size={16} className="text-rose-400" />}
+            {toastNotification.type === 'info' && <Info size={16} className="text-blue-400" />}
+            <span>{toastNotification.message}</span>
+            <button 
+              onClick={() => setToastNotification(null)}
+              className="ml-2 text-slate-400 hover:text-white cursor-pointer"
+            >
+              <X size={14} />
+            </button>
+          </motion.div>
+        </div>
+      )}
     </div>
   );
 };
@@ -2150,6 +2592,269 @@ const UnauthorizedDomainModal: React.FC<UnauthorizedDomainModalProps> = ({ isOpe
                   className="w-full py-3.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-2xl transition-all cursor-pointer text-center font-sans tracking-wide"
                 >
                   Đóng Hướng Dẫn
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      )}
+    </AnimatePresence>
+  );
+};
+
+interface FirestoreRulesModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onRetry?: () => void;
+}
+
+const FIRESTORE_RULES_CONTENT = `rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function isValidDevice(data) {
+      return data.id is string && data.id.size() <= 128
+        && data.userId is string && data.userId.size() <= 128
+        && data.userId == request.auth.uid
+        && data.name is string && data.name.size() <= 256
+        && data.model is string && data.model.size() <= 128
+        && data.serialNumber is string && data.serialNumber.size() <= 128
+        && (!data.keys().hasAny(['manufacturer']) || (data.manufacturer is string && data.manufacturer.size() <= 128))
+        && (!data.keys().hasAny(['origin']) || (data.origin is string && data.origin.size() <= 128))
+        && (!data.keys().hasAny(['yearOfProduction']) || (data.yearOfProduction is number) || (data.yearOfProduction is string && data.yearOfProduction.size() <= 16))
+        && (!data.keys().hasAny(['expiryGCP']) || (data.expiryGCP is string && data.expiryGCP.size() <= 32))
+        && (!data.keys().hasAny(['expiryGKD']) || (data.expiryGKD is string && data.expiryGKD.size() <= 32))
+        && (!data.keys().hasAny(['gcpIssueDate']) || (data.gcpIssueDate is string && data.gcpIssueDate.size() <= 32))
+        && (!data.keys().hasAny(['gcpPeriod']) || (data.gcpPeriod is number) || (data.gcpPeriod is string && data.gcpPeriod.size() <= 16))
+        && (!data.keys().hasAny(['gkdIssueDate']) || (data.gkdIssueDate is string && data.gkdIssueDate.size() <= 32))
+        && (!data.keys().hasAny(['gkdPeriod']) || (data.gkdPeriod is number) || (data.gkdPeriod is string && data.gkdPeriod.size() <= 16))
+        && (!data.keys().hasAny(['manager']) || (data.manager is string && data.manager.size() <= 128))
+        && (!data.keys().hasAny(['lastMaintenance']) || (data.lastMaintenance is string && data.lastMaintenance.size() <= 32))
+        && (!data.keys().hasAny(['maintenancePeriod']) || (data.maintenancePeriod is number) || (data.maintenancePeriod is string && data.maintenancePeriod.size() <= 16))
+        && (!data.keys().hasAny(['notes']) || (data.notes is string && data.notes.size() <= 4000))
+        && (!data.keys().hasAny(['noteDate']) || (data.noteDate is string && data.noteDate.size() <= 32))
+        && (!data.keys().hasAny(['notesList']) || (data.notesList is list && data.notesList.size() <= 200));
+    }
+
+    function isValidActivityLog(data) {
+      return data.id is string && data.id.size() <= 128
+        && data.userId is string && data.userId.size() <= 128
+        && data.userId == request.auth.uid
+        && data.deviceId is string && data.deviceId.size() <= 128
+        && data.date is string && data.date.size() <= 32
+        && data.user is string && data.user.size() <= 128
+        && data.type is string && data.type.size() <= 32
+        && data.categoryLabel is string && data.categoryLabel.size() <= 128
+        && data.description is string && data.description.size() <= 2000
+        && (!data.keys().hasAny(['notes']) || (data.notes is string && data.notes.size() <= 4000));
+    }
+
+    function isValidUserSettings(data) {
+      return data.userId is string && data.userId.size() <= 128
+        && data.userId == request.auth.uid
+        && (!data.keys().hasAny(['telegramBotToken']) || (data.telegramBotToken is string && data.telegramBotToken.size() <= 256))
+        && (!data.keys().hasAny(['telegramChatId']) || (data.telegramChatId is string && data.telegramChatId.size() <= 128))
+        && (!data.keys().hasAny(['telegramEnabled']) || (data.telegramEnabled is bool))
+        && (!data.keys().hasAny(['warningDaysGCP']) || (data.warningDaysGCP is number) || (data.warningDaysGCP is string))
+        && (!data.keys().hasAny(['warningDaysGKD']) || (data.warningDaysGKD is number) || (data.warningDaysGKD is string))
+        && (!data.keys().hasAny(['warningDaysBD']) || (data.warningDaysBD is number) || (data.warningDaysBD is string))
+        && (!data.keys().hasAny(['recipientEmail']) || (data.recipientEmail is string && data.recipientEmail.size() <= 256))
+        && (!data.keys().hasAny(['isSubscribed']) || (data.isSubscribed is bool))
+        && (!data.keys().hasAny(['hasSeeded']) || (data.hasSeeded is bool))
+        && (!data.keys().hasAny(['channels']) || (data.channels is map));
+    }
+
+    function isValidDriveConfig(data) {
+      return data.id is string && data.id.size() <= 128
+        && data.connected is bool
+        && (!data.keys().hasAny(['email']) || (data.email is string && data.email.size() <= 256))
+        && (!data.keys().hasAny(['accessToken']) || (data.accessToken is string && data.accessToken.size() <= 8192))
+        && (!data.keys().hasAny(['driveFolderIds']) || (data.driveFolderIds is map))
+        && (!data.keys().hasAny(['updatedAt']) || (data.updatedAt is string && data.updatedAt.size() <= 64));
+    }
+
+    match /test/{testId} {
+      allow read, write: if true;
+    }
+
+    match /devices/{deviceId} {
+      allow get: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(deviceId) && deviceId == incoming().id && isValidDevice(incoming());
+      allow update: if isSignedIn() && isValidId(deviceId) && isValidDevice(incoming()) && incoming().userId == resource.data.userId && incoming().id == resource.data.id;
+      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+
+    match /activityLogs/{logId} {
+      allow get: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(logId) && logId == incoming().id && isValidActivityLog(incoming());
+      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow update: if false;
+    }
+
+    match /userSettings/{userId} {
+      allow read: if isSignedIn() && userId == request.auth.uid;
+      allow create, update: if isSignedIn() && isValidId(userId) && userId == request.auth.uid && isValidUserSettings(incoming());
+      allow delete: if isSignedIn() && userId == request.auth.uid;
+    }
+
+    match /globalDriveConfig/{configId} {
+      allow read: if isSignedIn() && isValidId(configId);
+      allow create, update: if isSignedIn() && isValidId(configId) && incoming().id == configId && isValidDriveConfig(incoming());
+      allow delete: if isSignedIn() && isValidId(configId);
+    }
+  }
+}`;
+
+const FirestoreRulesModal: React.FC<FirestoreRulesModalProps> = ({ isOpen, onClose, onRetry }) => {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(FIRESTORE_RULES_CONTENT);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    } catch {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    }
+  };
+
+  return (
+    <AnimatePresence>
+      {isOpen && (
+        <div className="fixed inset-0 z-55 z-[9999] flex items-center justify-center p-4">
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={onClose}
+            className="fixed inset-0 bg-slate-950/45 backdrop-blur-xs"
+          />
+          
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: 15 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 15 }}
+            transition={{ type: "spring", duration: 0.4 }}
+            className="bg-white rounded-3xl border border-slate-150 shadow-2xl overflow-hidden max-w-xl w-full relative z-10 flex flex-col font-sans max-h-[90vh]"
+          >
+            <div className="h-2 bg-gradient-to-r from-amber-500 to-emerald-500" />
+            
+            <div className="p-7 overflow-y-auto">
+              <button 
+                onClick={onClose}
+                className="absolute right-5 top-5 p-1.5 rounded-xl hover:bg-slate-100 transition-colors text-slate-400 hover:text-slate-705 cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+
+              <div className="flex items-start gap-4">
+                <div className="p-3 bg-amber-50 rounded-2xl text-amber-600 inline-flex shrink-0">
+                  <ShieldCheck className="stroke-[2.5]" size={24} />
+                </div>
+                <div>
+                  <h3 className="text-base font-extrabold text-slate-800 leading-snug">
+                    Cập nhật Quy tắc Bảo mật Firestore (Rules)
+                  </h3>
+                  <p className="text-xs text-slate-500 leading-relaxed mt-1">
+                    Để kích hoạt đồng bộ dữ liệu đa thiết bị trên dự án <strong className="text-slate-700">quanlythietbiyte-babd8</strong>, bạn chỉ cần xuất bản bộ quy tắc bảo mật vào Firebase Console một lần duy nhất.
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-6 space-y-4 text-xs">
+                <div className="space-y-3">
+                  <h4 className="font-bold text-slate-755 uppercase tracking-widest text-[10px]">4 bước thực hiện nhanh (khoảng 30 giây):</h4>
+                  
+                  <div className="grid gap-2.5 text-slate-600">
+                    <div className="flex gap-2.5">
+                      <span className="w-5 h-5 rounded-full bg-slate-100 flex items-center justify-center font-bold text-slate-500 text-[10px] shrink-0 mt-0.5">1</span>
+                      <p className="leading-relaxed">
+                        Mở trang cấu hình Rules: <a href="https://console.firebase.google.com/project/quanlythietbiyte-babd8/firestore/rules" target="_blank" rel="noreferrer" className="text-blue-600 font-bold hover:underline inline-flex items-center gap-1">Firebase Console &gt; Firestore Rules <ExternalLink size={11} /></a>
+                      </p>
+                    </div>
+
+                    <div className="flex gap-2.5">
+                      <span className="w-5 h-5 rounded-full bg-slate-100 flex items-center justify-center font-bold text-slate-500 text-[10px] shrink-0 mt-0.5">2</span>
+                      <p className="leading-relaxed">
+                        Bấm nút <strong>"Sao chép Rules"</strong> bên dưới để copy trọn bộ quy tắc bảo mật chuẩn ABAC.
+                      </p>
+                    </div>
+
+                    <div className="flex gap-2.5">
+                      <span className="w-5 h-5 rounded-full bg-slate-100 flex items-center justify-center font-bold text-slate-500 text-[10px] shrink-0 mt-0.5">3</span>
+                      <p className="leading-relaxed">
+                        Trên trang Firebase Console, chọn toàn bộ nội dung cũ trong khung soạn thảo &rarr; dán nội dung vừa copy &rarr; bấm nút <strong>Publish (Xuất bản)</strong> màu xanh ở góc trên.
+                      </p>
+                    </div>
+
+                    <div className="flex gap-2.5">
+                      <span className="w-5 h-5 rounded-full bg-slate-100 flex items-center justify-center font-bold text-slate-500 text-[10px] shrink-0 mt-0.5">4</span>
+                      <p className="leading-relaxed">
+                        Quay lại trang này và bấm <strong>"Thử đồng bộ lại"</strong>. Hệ thống sẽ tự động liên kết thành công!
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-4 bg-slate-900 rounded-2xl space-y-2 text-slate-300">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Nội dung firestore.rules:</span>
+                    <button 
+                      onClick={handleCopy}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all shrink-0 cursor-pointer inline-flex items-center gap-1.5 ${
+                        copied 
+                          ? "bg-emerald-600 text-white" 
+                          : "bg-blue-600 hover:bg-blue-500 text-white shadow-xs"
+                      }`}
+                    >
+                      {copied ? <Check size={13} /> : <Copy size={13} />}
+                      {copied ? "Đã Sao Chép!" : "Sao Chép Rules"}
+                    </button>
+                  </div>
+                  <pre className="text-[11px] font-mono max-h-48 overflow-y-auto p-2 bg-slate-950/80 rounded-xl text-slate-300 select-all leading-snug">
+                    {FIRESTORE_RULES_CONTENT}
+                  </pre>
+                </div>
+              </div>
+
+              <div className="mt-6 flex items-center gap-3">
+                <a
+                  href="https://console.firebase.google.com/project/quanlythietbiyte-babd8/firestore/rules"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition-all cursor-pointer text-center font-sans tracking-wide inline-flex items-center justify-center gap-1.5"
+                >
+                  Mở trang Rules trên Firebase Console <ExternalLink size={13} />
+                </a>
+                {onRetry && (
+                  <button
+                    onClick={onRetry}
+                    className="py-3 px-5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all cursor-pointer text-center font-sans tracking-wide"
+                  >
+                    Thử kết nối lại
+                  </button>
+                )}
+                <button
+                  onClick={onClose}
+                  className="py-3 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-all cursor-pointer text-center font-sans"
+                >
+                  Đóng
                 </button>
               </div>
             </div>
@@ -2822,11 +3527,13 @@ const DeviceRowV2 = ({ device, onConfirm, onDelete, onEdit, onShowHistory, onSho
 const MaintenanceSchedule = ({ 
   devices, 
   warningDaysBD = 30,
-  activityLogs = []
+  activityLogs = [],
+  onOpenCharts
 }: { 
   devices: Device[], 
   warningDaysBD: number,
-  activityLogs?: ActivityLog[]
+  activityLogs?: ActivityLog[],
+  onOpenCharts?: () => void
 }) => {
   const [expandedDevices, setExpandedDevices] = useState<Record<string, boolean>>({});
 
@@ -2839,9 +3546,21 @@ const MaintenanceSchedule = ({
 
   return (
     <div className="flex-1 bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
-      <div className="p-6 border-b border-slate-100 bg-slate-50/30">
-        <h3 className="text-lg font-bold text-slate-800">Lịch trình bảo trì định kỳ</h3>
-        <p className="text-xs text-slate-500">Danh sách các thiết bị cần bảo trì trong các tháng tới (Nhấn vào thẻ thiết bị để xem dòng thời gian lịch sử)</p>
+      <div className="p-6 border-b border-slate-100 bg-slate-50/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h3 className="text-lg font-bold text-slate-800">Lịch trình bảo trì định kỳ</h3>
+          <p className="text-xs text-slate-500">Danh sách các thiết bị cần bảo trì trong các tháng tới (Nhấn vào thẻ thiết bị để xem dòng thời gian lịch sử)</p>
+        </div>
+        {onOpenCharts && (
+          <button
+            type="button"
+            onClick={onOpenCharts}
+            className="px-3.5 py-2 bg-purple-50 hover:bg-purple-100 text-purple-700 font-bold rounded-xl text-xs transition-all border border-purple-200 inline-flex items-center gap-2 cursor-pointer shadow-xs shrink-0 self-start sm:self-auto"
+          >
+            <BarChart3 size={15} />
+            <span>Xem biểu đồ phân tích Recharts</span>
+          </button>
+        )}
       </div>
       <div className="flex-1 overflow-auto p-6 space-y-4">
         {devices.map(device => {
@@ -3003,6 +3722,9 @@ interface SettingsPanelProps {
   setIsSubscribed: (val: boolean) => void;
   channels: { expiryGCP: boolean; expiryGKD: boolean; maintenance: boolean };
   setChannels: React.Dispatch<React.SetStateAction<{ expiryGCP: boolean; expiryGKD: boolean; maintenance: boolean }>>;
+  onOpenFirestoreRulesModal?: () => void;
+  firestorePermissionError?: boolean;
+  onRetryFirestoreSync?: () => void;
 }
 
 const SettingsPanel: React.FC<SettingsPanelProps> = ({
@@ -3034,7 +3756,10 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   isSubscribed,
   setIsSubscribed,
   channels,
-  setChannels
+  setChannels,
+  onOpenFirestoreRulesModal,
+  firestorePermissionError,
+  onRetryFirestoreSync
 }) => {
   const email = recipientEmail;
   const setEmail = setRecipientEmail;
@@ -3720,6 +4445,77 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
             <span className="text-xs font-bold uppercase tracking-widest leading-relaxed">
               Trạng thái lưu trữ: {isDriveConnected ? "Cloud (Google Drive)" : "Chế độ an toàn ngoại tuyến (mô phỏng)"}
             </span>
+          </div>
+        </div>
+      </div>
+
+      {/* SECTION 3: Firestore Cloud Database & Rules */}
+      <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+        <div className="p-8 border-b border-slate-100 bg-slate-50/50">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <div className="p-3 bg-amber-500 text-white rounded-2xl shadow-lg shadow-amber-100">
+                <Database size={24} />
+              </div>
+              <div>
+                <h2 className="text-2xl font-bold text-slate-800 tracking-tight">Cơ sở dữ liệu đám mây Firestore</h2>
+                <p className="text-sm text-slate-500">Lưu trữ hồ sơ thiết bị, nhật ký hoạt động và cấu hình người dùng trực tiếp trên Firebase Cloud</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              {firestorePermissionError ? (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                  <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                  Cần cập nhật Rules
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                  Đang đồng bộ đám mây
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="p-8 space-y-6">
+          <div className="text-sm text-slate-600 leading-relaxed space-y-2">
+            <p>
+              Dự án Firebase đang kết nối: <code className="bg-slate-100 text-red-600 px-2 py-0.5 rounded font-mono font-bold">quanlythietbiyte-babd8</code>.
+            </p>
+            <p className="text-xs text-slate-500 leading-relaxed">
+              Nếu gặp thông báo <em>"Missing or insufficient permissions"</em>, đó là do trang quản trị Firebase Console chưa được xuất bản bộ quy tắc truy cập (Rules) tương ứng cho tài khoản đăng nhập của bạn.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3 pt-2">
+            {onOpenFirestoreRulesModal && (
+              <button
+                type="button"
+                onClick={onOpenFirestoreRulesModal}
+                className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition-all shadow-xs cursor-pointer inline-flex items-center gap-2"
+              >
+                <ShieldCheck size={16} />
+                Xem hướng dẫn & Sao chép Rules Firestore
+              </button>
+            )}
+            <a
+              href="https://console.firebase.google.com/project/quanlythietbiyte-babd8/firestore/rules"
+              target="_blank"
+              rel="noreferrer"
+              className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-all cursor-pointer inline-flex items-center gap-1.5"
+            >
+              Mở Firebase Console Rules <ExternalLink size={13} />
+            </a>
+            {onRetryFirestoreSync && (
+              <button
+                type="button"
+                onClick={onRetryFirestoreSync}
+                className="px-4 py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-bold rounded-xl transition-all cursor-pointer inline-flex items-center gap-1.5"
+              >
+                Thử kết nối lại
+              </button>
+            )}
           </div>
         </div>
       </div>
