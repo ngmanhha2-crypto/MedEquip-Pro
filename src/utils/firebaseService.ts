@@ -188,11 +188,12 @@ export async function saveActivityLogToFirestore(userId: string, log: ActivityLo
   try {
     const payload = cleanPayload({
       ...log,
+      id: log.id,
       userId
     });
     await setDoc(doc(db, 'activityLogs', log.id), payload);
   } catch (error) {
-    handleFirestoreError(error, OperationType.CREATE, docPath);
+    handleFirestoreError(error, OperationType.WRITE, docPath);
   }
 }
 

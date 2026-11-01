@@ -2653,18 +2653,19 @@ service cloud.firestore {
       return (!('id' in data) || (data.id is string && data.id.size() <= 128))
         && data.userId is string && data.userId.size() <= 128
         && data.userId == request.auth.uid
-        && data.deviceId is string && data.deviceId.size() <= 128
-        && data.date is string && data.date.size() <= 64
-        && data.user is string && data.user.size() <= 128
-        && data.type is string && data.type.size() <= 64
-        && data.categoryLabel is string && data.categoryLabel.size() <= 128
-        && data.description is string && data.description.size() <= 4000
+        && (!('deviceId' in data) || (data.deviceId is string && data.deviceId.size() <= 128) || data.deviceId is int || data.deviceId is float)
+        && (!('date' in data) || (data.date is string && data.date.size() <= 64))
+        && (!('user' in data) || (data.user is string && data.user.size() <= 128))
+        && (!('type' in data) || (data.type is string && data.type.size() <= 64))
+        && (!('categoryLabel' in data) || (data.categoryLabel is string && data.categoryLabel.size() <= 128))
+        && (!('description' in data) || (data.description is string && data.description.size() <= 4000))
         && (!('notes' in data) || (data.notes is string && data.notes.size() <= 10000));
     }
 
     function isValidUserSettings(data) {
       return data.userId is string && data.userId.size() <= 128
         && data.userId == request.auth.uid
+        && (!('id' in data) || (data.id is string && data.id.size() <= 128))
         && (!('telegramBotToken' in data) || (data.telegramBotToken is string && data.telegramBotToken.size() <= 256))
         && (!('telegramChatId' in data) || (data.telegramChatId is string && data.telegramChatId.size() <= 128))
         && (!('telegramEnabled' in data) || (data.telegramEnabled is bool))
@@ -2679,7 +2680,7 @@ service cloud.firestore {
 
     function isValidDriveConfig(data) {
       return (!('id' in data) || (data.id is string && data.id.size() <= 128))
-        && data.connected is bool
+        && (!('connected' in data) || data.connected is bool)
         && (!('email' in data) || (data.email is string && data.email.size() <= 256))
         && (!('accessToken' in data) || (data.accessToken is string && data.accessToken.size() <= 8192))
         && (!('driveFolderIds' in data) || (data.driveFolderIds is map))
@@ -2702,8 +2703,8 @@ service cloud.firestore {
       allow get: if isSignedIn() && (resource.data.userId == request.auth.uid || !('userId' in resource.data));
       allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
       allow create: if isSignedIn() && isValidId(logId) && incoming().userId == request.auth.uid && (!('id' in incoming()) || incoming().id == logId) && isValidActivityLog(incoming());
+      allow update: if isSignedIn() && isValidId(logId) && incoming().userId == request.auth.uid && (!('id' in incoming()) || incoming().id == logId) && isValidActivityLog(incoming());
       allow delete: if isSignedIn() && (resource.data.userId == request.auth.uid || !('userId' in resource.data));
-      allow update: if false;
     }
 
     match /userSettings/{userId} {
