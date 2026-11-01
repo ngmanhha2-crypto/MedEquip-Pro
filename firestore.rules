@@ -91,8 +91,8 @@ service cloud.firestore {
 
     // 2. Devices Collection Rules
     match /devices/{deviceId} {
-      allow get: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow get: if isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.get('userId', '') == request.auth.uid);
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.get('userId', '') == request.auth.uid);
       
       allow create: if isSignedIn() 
         && isValidId(deviceId) 
@@ -105,20 +105,20 @@ service cloud.firestore {
         && incoming().userId == resource.data.userId
         && incoming().id == resource.data.id;
         
-      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow delete: if isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.get('userId', '') == request.auth.uid);
     }
 
     // 3. ActivityLogs Collection Rules
     match /activityLogs/{logId} {
-      allow get: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow get: if isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.get('userId', '') == request.auth.uid);
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.get('userId', '') == request.auth.uid);
       
       allow create: if isSignedIn() 
         && isValidId(logId) 
         && logId == incoming().id 
         && isValidActivityLog(incoming());
         
-      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow delete: if isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.get('userId', '') == request.auth.uid);
       
       // Activity logs are immutable append-only records
       allow update: if false;

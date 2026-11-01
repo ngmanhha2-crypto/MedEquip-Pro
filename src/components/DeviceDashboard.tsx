@@ -2691,18 +2691,18 @@ service cloud.firestore {
     }
 
     match /devices/{deviceId} {
-      allow get: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow get: if isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.get('userId', '') == request.auth.uid);
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.get('userId', '') == request.auth.uid);
       allow create: if isSignedIn() && isValidId(deviceId) && deviceId == incoming().id && isValidDevice(incoming());
       allow update: if isSignedIn() && isValidId(deviceId) && isValidDevice(incoming()) && incoming().userId == resource.data.userId && incoming().id == resource.data.id;
-      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow delete: if isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.get('userId', '') == request.auth.uid);
     }
 
     match /activityLogs/{logId} {
-      allow get: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow get: if isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.get('userId', '') == request.auth.uid);
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.get('userId', '') == request.auth.uid);
       allow create: if isSignedIn() && isValidId(logId) && logId == incoming().id && isValidActivityLog(incoming());
-      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow delete: if isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.get('userId', '') == request.auth.uid);
       allow update: if false;
     }
 
