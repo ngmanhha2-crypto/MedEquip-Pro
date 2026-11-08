@@ -16,6 +16,8 @@ import {
   ShieldCheck,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
+  ChevronDown,
   Pencil,
   X,
   Trash2,
@@ -39,10 +41,12 @@ import {
   EyeOff,
   UserPlus,
   LogIn,
+  LogOut,
   Info,
   BarChart3,
   TrendingUp,
-  Activity
+  Activity,
+  Wrench
 } from 'lucide-react';
 import { DeviceStatsCharts } from './DeviceStatsCharts';
 import { MOCK_DEVICES } from '../mockData';
@@ -117,13 +121,17 @@ const DeviceDashboard: React.FC = () => {
   const [selectedNoteDevice, setSelectedNoteDevice] = useState<Device | null>(null);
   const [activeTab, setActiveTab] = useState<'inventory' | 'charts' | 'maintenance' | 'legal' | 'settings'>('inventory');
 
-  // Custom warning thresholds configuration days (Giấy phép GCP, Kiểm định GKĐ, Bảo dưỡng BD)
+  // Custom warning thresholds configuration days (Giấy phép GCP, Kiểm định GKĐ, Kiểm xạ GKX, Bảo dưỡng BD)
   const [warningDaysGCP, setWarningDaysGCP] = useState<number>(() => {
     const val = localStorage.getItem('medequip_warning_days_gcp');
     return val ? (parseInt(val) === 30 ? 75 : parseInt(val)) : 75;
   });
   const [warningDaysGKD, setWarningDaysGKD] = useState<number>(() => {
     const val = localStorage.getItem('medequip_warning_days_gkd');
+    return val ? parseInt(val) : 30;
+  });
+  const [warningDaysGKX, setWarningDaysGKX] = useState<number>(() => {
+    const val = localStorage.getItem('medequip_warning_days_gkx');
     return val ? parseInt(val) : 30;
   });
   const [warningDaysBD, setWarningDaysBD] = useState<number>(() => {
@@ -138,12 +146,12 @@ const DeviceDashboard: React.FC = () => {
   const [isSubscribed, setIsSubscribed] = useState<boolean>(() => {
     return localStorage.getItem('medequip_saved_is_subscribed') === 'true';
   });
-  const [channels, setChannels] = useState<{ expiryGCP: boolean; expiryGKD: boolean; maintenance: boolean }>(() => {
+  const [channels, setChannels] = useState<{ expiryGCP: boolean; expiryGKD: boolean; expiryGKX: boolean; maintenance: boolean }>(() => {
     try {
       const saved = localStorage.getItem('medequip_saved_notification_channels');
-      return saved ? JSON.parse(saved) : { expiryGCP: true, expiryGKD: true, maintenance: true };
+      return saved ? { expiryGKX: true, ...JSON.parse(saved) } : { expiryGCP: true, expiryGKD: true, expiryGKX: true, maintenance: true };
     } catch {
-      return { expiryGCP: true, expiryGKD: true, maintenance: true };
+      return { expiryGCP: true, expiryGKD: true, expiryGKX: true, maintenance: true };
     }
   });
 
@@ -763,10 +771,13 @@ const DeviceDashboard: React.FC = () => {
             if (firestoreSettings.telegramEnabled !== undefined) setTelegramEnabled(firestoreSettings.telegramEnabled);
             if (firestoreSettings.warningDaysGCP !== undefined) setWarningDaysGCP(firestoreSettings.warningDaysGCP);
             if (firestoreSettings.warningDaysGKD !== undefined) setWarningDaysGKD(firestoreSettings.warningDaysGKD);
+            if (firestoreSettings.warningDaysGKX !== undefined) setWarningDaysGKX(firestoreSettings.warningDaysGKX);
             if (firestoreSettings.warningDaysBD !== undefined) setWarningDaysBD(firestoreSettings.warningDaysBD);
             if (firestoreSettings.recipientEmail !== undefined) setRecipientEmail(firestoreSettings.recipientEmail);
             if (firestoreSettings.isSubscribed !== undefined) setIsSubscribed(firestoreSettings.isSubscribed);
-            if (firestoreSettings.channels !== undefined) setChannels(firestoreSettings.channels);
+            if (firestoreSettings.channels !== undefined) {
+              setChannels(prev => ({ ...prev, ...firestoreSettings.channels }));
+            }
           }
 
           const firestoreDevices = await fetchDevicesFromFirestore(currentUser.uid);
@@ -792,19 +803,28 @@ const DeviceDashboard: React.FC = () => {
             // Lấy chính danh sách thiết bị đang hiển thị trong state hiện tại (nếu có)
             // Giúp giữ lại thông tin người quản lý, tên, số serial mà bạn đã chỉnh sửa hoặc thêm mới trước khi đồng bộ!
             const devicesToSeed = (devices && devices.length > 0) ? devices : MOCK_DEVICES;
-            const seedDevices = devicesToSeed.map(d => ({
-              ...d,
-              userId: currentUser.uid
-            }));
+            const userPrefix = currentUser.uid.slice(0, 8);
+            const seedDevices = devicesToSeed.map((d, idx) => {
+              const scopedId = d.id && d.id.includes(userPrefix) ? d.id : `${userPrefix}_${d.id || idx + 1}`;
+              return {
+                ...d,
+                id: scopedId,
+                userId: currentUser.uid
+              };
+            });
             
             for (const d of seedDevices) {
-              await saveDeviceToFirestore(currentUser.uid, d);
+              try {
+                await saveDeviceToFirestore(currentUser.uid, d);
+              } catch (err) {
+                console.warn('Error saving seed device to Firestore:', err);
+              }
             }
 
             const initialLogsSeed: ActivityLog[] = [
               {
-                id: 'log-1',
-                deviceId: '1',
+                id: `${userPrefix}_log-1`,
+                deviceId: seedDevices[0]?.id || `${userPrefix}_1`,
                 date: '2025-12-01',
                 user: 'Nguyễn Mạnh Hà',
                 type: 'CONFIRM',
@@ -813,8 +833,8 @@ const DeviceDashboard: React.FC = () => {
                 notes: 'Hãng Siemens thực hiện, vệ sinh bóng phát tia X và cân chỉnh liều lượng phát xạ.'
               },
               {
-                id: 'log-2',
-                deviceId: '1',
+                id: `${userPrefix}_log-2`,
+                deviceId: seedDevices[0]?.id || `${userPrefix}_1`,
                 date: '2025-05-20',
                 user: 'Admin',
                 type: 'CONFIRM',
@@ -823,8 +843,8 @@ const DeviceDashboard: React.FC = () => {
                 notes: 'Thực hiện bởi Trung tâm Kiểm định thiết bị Bức xạ.'
               },
               {
-                id: 'log-3',
-                deviceId: '1',
+                id: `${userPrefix}_log-3`,
+                deviceId: seedDevices[0]?.id || `${userPrefix}_1`,
                 date: '2024-01-20',
                 user: 'Hệ thống',
                 type: 'CREATE',
@@ -837,7 +857,11 @@ const DeviceDashboard: React.FC = () => {
             } as any as ActivityLog));
 
             for (const log of initialLogsSeed) {
-              await saveActivityLogToFirestore(currentUser.uid, log);
+              try {
+                await saveActivityLogToFirestore(currentUser.uid, log);
+              } catch (err) {
+                console.warn('Error saving seed log to Firestore:', err);
+              }
             }
 
             // Explicitly save settings flag that we migrated/seeded and won't do it again
@@ -1015,6 +1039,7 @@ const DeviceDashboard: React.FC = () => {
     return devices.filter(d => {
       const gkdDays = getDaysRemaining(d.expiryGKD);
       const gcpDays = getDaysRemaining(d.expiryGCP);
+      const gkxDays = getDaysRemaining(d.expiryGKX);
       const term = searchTerm.toLowerCase().trim();
       const isSearchMatch = 
         (d.name || '').toLowerCase().includes(term) || 
@@ -1026,9 +1051,10 @@ const DeviceDashboard: React.FC = () => {
       
       if (filterStatus === 'all') return isSearchMatch;
       
-      const isExpired = (gkdDays !== null && gkdDays < 0) || (gcpDays !== null && gcpDays < 0);
+      const isExpired = (gkdDays !== null && gkdDays < 0) || (gcpDays !== null && gcpDays < 0) || (gkxDays !== null && gkxDays < 0);
       const isWarning = (gkdDays !== null && gkdDays >= 0 && gkdDays <= warningDaysGKD) || 
-                       (gcpDays !== null && gcpDays >= 0 && gcpDays <= warningDaysGCP);
+                        (gcpDays !== null && gcpDays >= 0 && gcpDays <= warningDaysGCP) ||
+                        (gkxDays !== null && gkxDays >= 0 && gkxDays <= warningDaysGKX);
       
       if (filterStatus === 'expired') return isSearchMatch && isExpired;
       if (filterStatus === 'warning') return isSearchMatch && isWarning;
@@ -1036,7 +1062,7 @@ const DeviceDashboard: React.FC = () => {
       
       return isSearchMatch;
     });
-  }, [devices, searchTerm, filterStatus, warningDaysGKD, warningDaysGCP]);
+  }, [devices, searchTerm, filterStatus, warningDaysGKD, warningDaysGCP, warningDaysGKX]);
 
   const handleExportExcel = () => {
     const ws = XLSX.utils.json_to_sheet(devices.map(d => ({
@@ -1047,6 +1073,7 @@ const DeviceDashboard: React.FC = () => {
       'Năm SX': d.yearOfProduction,
       'Hạn GCP': formatDisplayDate(d.expiryGCP),
       'Hạn GKĐ': formatDisplayDate(d.expiryGKD),
+      'Hạn Kiểm xạ (GKX)': formatDisplayDate(d.expiryGKX),
       'Bảo dưỡng lần cuối': formatDisplayDate(d.lastMaintenance)
     })));
     const wb = XLSX.utils.book_new();
@@ -1056,7 +1083,7 @@ const DeviceDashboard: React.FC = () => {
 
   const handleConfirmDone = async (
     id: string, 
-    type: 'GCP' | 'GKD' | 'BD', 
+    type: 'GCP' | 'GKD' | 'GKX' | 'BD', 
     manualDate?: string,
     issueDate?: string,
     period?: number
@@ -1068,6 +1095,9 @@ const DeviceDashboard: React.FC = () => {
     if (type === 'GKD') {
       logDescription = `Xác nhận hoàn thành kiểm định (GKĐ) định kỳ cho ${targetDeviceName}.`;
       category = 'Kiểm định';
+    } else if (type === 'GKX') {
+      logDescription = `Xác nhận hoàn thành kiểm xạ (GKX) an toàn bức xạ cho ${targetDeviceName}.`;
+      category = 'Kiểm xạ';
     } else if (type === 'GCP') {
       logDescription = `Xác nhận gia hạn thành công Giấy phép sử dụng (GCP) cho ${targetDeviceName}.`;
       category = 'Giấy phép';
@@ -1085,6 +1115,14 @@ const DeviceDashboard: React.FC = () => {
             expiryGKD: targetDate,
             gkdIssueDate: issueDate || d.gkdIssueDate,
             gkdPeriod: period !== undefined ? period : d.gkdPeriod
+          }; 
+        }
+        if (type === 'GKX') {
+          return { 
+            ...d, 
+            expiryGKX: targetDate,
+            gkxIssueDate: issueDate || d.gkxIssueDate,
+            gkxPeriod: period !== undefined ? period : d.gkxPeriod
           }; 
         }
         if (type === 'GCP') {
@@ -1108,6 +1146,11 @@ const DeviceDashboard: React.FC = () => {
         updatedD.expiryGKD = targetDate;
         if (issueDate) updatedD.gkdIssueDate = issueDate;
         if (period !== undefined) updatedD.gkdPeriod = period;
+      }
+      if (type === 'GKX') {
+        updatedD.expiryGKX = targetDate;
+        if (issueDate) updatedD.gkxIssueDate = issueDate;
+        if (period !== undefined) updatedD.gkxPeriod = period;
       }
       if (type === 'GCP') {
         updatedD.expiryGCP = targetDate;
@@ -1368,6 +1411,7 @@ const DeviceDashboard: React.FC = () => {
     if (device.origin) msg += `<b>Xuất xứ:</b> ${device.origin}\n`;
     if (device.expiryGCP) msg += `<b>Hạn Giấy phép (GCP):</b> <code>${formatDisplayDate(device.expiryGCP)}</code>\n`;
     if (device.expiryGKD) msg += `<b>Hạn Kiểm định (GKĐ):</b> <code>${formatDisplayDate(device.expiryGKD)}</code>\n`;
+    if (device.expiryGKX) msg += `<b>Hạn Kiểm xạ (GKX):</b> <code>${formatDisplayDate(device.expiryGKX)}</code>\n`;
     if (extraNotes) msg += `\n📝 <b>Ghi chú:</b> <i>${extraNotes}</i>`;
     msg += `\n\n🕒 Thời gian: ${new Date().toLocaleString('vi-VN')}`;
 
@@ -1440,13 +1484,17 @@ const DeviceDashboard: React.FC = () => {
     const expiredList = devices.filter(d => {
       const gkd = getDaysRemaining(d.expiryGKD);
       const gcp = getDaysRemaining(d.expiryGCP);
-      return (gkd !== null && gkd < 0) || (gcp !== null && gcp < 0);
+      const gkx = getDaysRemaining(d.expiryGKX);
+      return (gkd !== null && gkd < 0) || (gcp !== null && gcp < 0) || (gkx !== null && gkx < 0);
     });
 
     const warningList = devices.filter(d => {
       const gkd = getDaysRemaining(d.expiryGKD);
       const gcp = getDaysRemaining(d.expiryGCP);
-      return (gkd !== null && gkd >= 0 && gkd <= warningDaysGKD) || (gcp !== null && gcp >= 0 && gcp <= warningDaysGCP);
+      const gkx = getDaysRemaining(d.expiryGKX);
+      return (gkd !== null && gkd >= 0 && gkd <= warningDaysGKD) || 
+             (gcp !== null && gcp >= 0 && gcp <= warningDaysGCP) ||
+             (gkx !== null && gkx >= 0 && gkx <= warningDaysGKX);
     });
 
     let msg = `📊 <b>BÁO CÁO TRẠNG THÁI THIẾT BỊ ĐỊNH KỲ</b>\n`;
@@ -1462,9 +1510,11 @@ const DeviceDashboard: React.FC = () => {
       expiredList.slice(0, 8).forEach((d, i) => {
         const gkdDays = getDaysRemaining(d.expiryGKD);
         const gcpDays = getDaysRemaining(d.expiryGCP);
+        const gkxDays = getDaysRemaining(d.expiryGKX);
         const reasons = [];
         if (gkdDays !== null && gkdDays < 0) reasons.push(`GKĐ quá ${Math.abs(gkdDays)} ngày`);
         if (gcpDays !== null && gcpDays < 0) reasons.push(`GCP quá ${Math.abs(gcpDays)} ngày`);
+        if (gkxDays !== null && gkxDays < 0) reasons.push(`GKX quá ${Math.abs(gkxDays)} ngày`);
         msg += `${i + 1}. <b>${d.name}</b> (Model: ${d.model || 'N/A'})\n`;
         msg += `   └ <i>Trạng thái: ${reasons.join(', ')}</i>\n`;
       });
@@ -1479,9 +1529,11 @@ const DeviceDashboard: React.FC = () => {
       warningList.slice(0, 8).forEach((d, i) => {
         const gkdDays = getDaysRemaining(d.expiryGKD);
         const gcpDays = getDaysRemaining(d.expiryGCP);
+        const gkxDays = getDaysRemaining(d.expiryGKX);
         const warnDetails = [];
         if (gkdDays !== null && gkdDays >= 0 && gkdDays <= warningDaysGKD) warnDetails.push(`GKĐ còn ${gkdDays} ngày`);
         if (gcpDays !== null && gcpDays >= 0 && gcpDays <= warningDaysGCP) warnDetails.push(`GCP còn ${gcpDays} ngày`);
+        if (gkxDays !== null && gkxDays >= 0 && gkxDays <= warningDaysGKX) warnDetails.push(`GKX còn ${gkxDays} ngày`);
         msg += `${i + 1}. <b>${d.name}</b> (Model: ${d.model || 'N/A'})\n`;
         msg += `   └ <i>Còn lại: ${warnDetails.join(', ')}</i>\n`;
       });
@@ -1503,31 +1555,38 @@ const DeviceDashboard: React.FC = () => {
     const expired = devices.filter(d => {
       const gkd = getDaysRemaining(d.expiryGKD);
       const gcp = getDaysRemaining(d.expiryGCP);
-      return (gkd !== null && gkd < 0) || (gcp !== null && gcp < 0);
+      const gkx = getDaysRemaining(d.expiryGKX);
+      return (gkd !== null && gkd < 0) || (gcp !== null && gcp < 0) || (gkx !== null && gkx < 0);
     }).length;
     
     const warning = devices.filter(d => {
       const gkd = getDaysRemaining(d.expiryGKD);
       const gcp = getDaysRemaining(d.expiryGCP);
-      return (gkd !== null && gkd >= 0 && gkd <= warningDaysGKD) || (gcp !== null && gcp >= 0 && gcp <= warningDaysGCP);
+      const gkx = getDaysRemaining(d.expiryGKX);
+      return (gkd !== null && gkd >= 0 && gkd <= warningDaysGKD) || 
+             (gcp !== null && gcp >= 0 && gcp <= warningDaysGCP) ||
+             (gkx !== null && gkx >= 0 && gkx <= warningDaysGKX);
     }).length;
 
     return { total: devices.length, expired, warning, ok: devices.length - expired - warning };
-  }, [devices, warningDaysGKD, warningDaysGCP]);
+  }, [devices, warningDaysGKD, warningDaysGCP, warningDaysGKX]);
 
   // Handle mock notifications
   React.useEffect(() => {
     devices.forEach(d => {
       const gkdDays = getDaysRemaining(d.expiryGKD);
       const gcpDays = getDaysRemaining(d.expiryGCP);
+      const gkxDays = getDaysRemaining(d.expiryGKX);
       
       const gkdReminder = checkReminders(gkdDays, warningDaysGKD);
       const gcpReminder = checkReminders(gcpDays, warningDaysGCP);
+      const gkxReminder = checkReminders(gkxDays, warningDaysGKX);
       
-      if (gkdReminder) console.log(`[NOTIF] ${d.name} (GKĐ): ${gkdReminder}`);
-      if (gcpReminder) console.log(`[NOTIF] ${d.name} (GCP): ${gcpReminder}`);
+      if (channels.expiryGKD && gkdReminder) console.log(`[NOTIF] ${d.name} (GKĐ): ${gkdReminder}`);
+      if (channels.expiryGCP && gcpReminder) console.log(`[NOTIF] ${d.name} (GCP): ${gcpReminder}`);
+      if (channels.expiryGKX && gkxReminder) console.log(`[NOTIF] ${d.name} (GKX): ${gkxReminder}`);
     });
-  }, [devices, warningDaysGKD, warningDaysGCP]);
+  }, [devices, warningDaysGKD, warningDaysGCP, warningDaysGKX, channels]);
 
   // Sync warning thresholds to localStorage automatically
   React.useEffect(() => {
@@ -1537,6 +1596,10 @@ const DeviceDashboard: React.FC = () => {
   React.useEffect(() => {
     localStorage.setItem('medequip_warning_days_gkd', warningDaysGKD.toString());
   }, [warningDaysGKD]);
+
+  React.useEffect(() => {
+    localStorage.setItem('medequip_warning_days_gkx', warningDaysGKX.toString());
+  }, [warningDaysGKX]);
 
   React.useEffect(() => {
     localStorage.setItem('medequip_warning_days_bd', warningDaysBD.toString());
@@ -1555,6 +1618,7 @@ const DeviceDashboard: React.FC = () => {
           telegramEnabled,
           warningDaysGCP,
           warningDaysGKD,
+          warningDaysGKX,
           warningDaysBD,
           recipientEmail,
           isSubscribed,
@@ -1573,6 +1637,7 @@ const DeviceDashboard: React.FC = () => {
     telegramEnabled,
     warningDaysGCP,
     warningDaysGKD,
+    warningDaysGKX,
     warningDaysBD,
     recipientEmail,
     isSubscribed,
@@ -1840,313 +1905,290 @@ const DeviceDashboard: React.FC = () => {
   }
 
   return (
-    <div className="flex h-screen bg-slate-50 font-sans text-slate-900 overflow-hidden">
-      {/* Sidebar Navigation */}
-      <aside className="w-64 bg-white border-r border-slate-200 flex flex-col shrink-0">
-        <div className="p-5 border-b border-slate-100 flex items-center gap-3">
+    <div className="flex flex-col h-screen bg-slate-50/70 font-sans text-slate-900 w-full overflow-hidden">
+      {/* 1. TOP HEADER BAR: Brand, Search, Alert Pill, Actions, Profile */}
+      <header className="bg-white border-b border-slate-200 px-4 sm:px-6 lg:px-8 py-3 shrink-0 flex items-center justify-between gap-4 z-20 shadow-xs">
+        {/* Brand & Department Badge */}
+        <div className="flex items-center gap-3 shrink-0">
           <img 
             src="/logo.svg" 
             alt="MedEquip Pro Logo" 
             className="w-9 h-9 rounded-xl shadow-sm shadow-blue-500/20 object-contain" 
           />
           <div>
-            <h1 className="text-base font-bold tracking-tight text-slate-900 leading-none">MedEquip <span className="text-blue-600 font-bold">Pro</span></h1>
-            <p className="text-[10px] text-slate-400 font-semibold mt-1 tracking-wider uppercase">Phòng X-Quang</p>
-          </div>
-        </div>
-        <nav className="flex-1 p-4 space-y-2">
-          <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 px-2">Phòng X-Quang</div>
-          <SidebarLink active={activeTab === 'inventory'} onClick={() => setActiveTab('inventory')} icon={<LayoutDashboard size={20} />} label="Danh mục thiết bị" />
-          <SidebarLink active={activeTab === 'charts'} onClick={() => setActiveTab('charts')} icon={<BarChart3 size={20} />} label="Biểu đồ thống kê" />
-          <SidebarLink active={activeTab === 'maintenance'} onClick={() => setActiveTab('maintenance')} icon={<Calendar size={20} />} label="Lịch bảo trì" />
-          <SidebarLink active={activeTab === 'legal'} onClick={() => setActiveTab('legal')} icon={<ShieldCheck size={20} />} label="Hồ sơ pháp lý" />
-          <SidebarLink active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} icon={<Settings size={20} />} label="Cài đặt hệ thống" />
-        </nav>
-        <div className="p-4 mt-auto border-t border-slate-100">
-          <div className="bg-slate-900 text-white rounded-xl p-4">
-            <div className="text-xs opacity-60 mb-1 italic">Hệ thống nhắc nhở tự động</div>
-            <div className="text-sm font-medium">{stats.expired} Thiết bị quá hạn</div>
-            <div className="mt-3 h-1 bg-white/20 rounded-full overflow-hidden">
-              <div 
-                className="bg-red-500 h-full transition-all duration-500" 
-                style={{ width: `${(stats.expired / stats.total) * 100}%` }}
-              ></div>
-            </div>
-          </div>
-        </div>
-      </aside>
-
-      {/* Main Content Area */}
-      <main className="flex-1 flex flex-col overflow-hidden">
-        {/* Header */}
-        <header className="h-20 bg-white border-b border-slate-200 px-8 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-4">
-            <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
-                <Search size={16} />
-              </span>
-              <input 
-                type="text" 
-                placeholder="Tìm kiếm thiết bị (tên, model, hãng...)" 
-                className="pl-10 pr-4 py-2 bg-slate-100 border-none rounded-lg text-sm w-96 focus:ring-2 focus:ring-blue-500 outline-none transition-all placeholder:text-slate-400"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                onFocus={() => setIsSearchFocused(true)}
-                onBlur={() => setTimeout(() => setIsSearchFocused(false), 200)}
-              />
-              {isSearchFocused && matchingSuggestions.length > 0 && (
-                <div className="absolute left-0 mt-2 w-[480px] max-h-96 overflow-y-auto bg-white border border-slate-200/80 rounded-2xl shadow-2xl z-50 p-3 divide-y divide-slate-100 animate-in fade-in slide-in-from-top-2 duration-150">
-                  <div className="px-3 py-1.5 text-slate-400 text-[10px] font-bold uppercase tracking-wider">
-                    Gợi ý thiết bị phù hợp ({matchingSuggestions.length})
-                  </div>
-                  <div className="pt-2 space-y-0.5">
-                    {matchingSuggestions.map((device) => (
-                      <button
-                        key={device.id}
-                        type="button"
-                        onMouseDown={() => {
-                          setEditingDevice(device);
-                          setIsModalOpen(true);
-                          setSearchTerm('');
-                        }}
-                        className="w-full text-left p-2.5 hover:bg-slate-50 rounded-xl transition-all flex flex-col gap-1 cursor-pointer focus:bg-slate-50 outline-none group"
-                      >
-                        <div className="flex items-center justify-between w-full">
-                          <span className="font-bold text-slate-800 text-sm group-hover:text-blue-600 transition-colors leading-snug">
-                            {device.name}
-                          </span>
-                          <span className="text-[9px] font-mono bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-bold uppercase shrink-0 ml-2">
-                            S/N: {device.serialNumber || 'N/A'}
-                          </span>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-x-1.5 text-[11px] text-slate-500 leading-none">
-                          <span>Model: <strong className="text-slate-700 font-medium font-sans">{device.model || 'Chưa rõ'}</strong></span>
-                          {device.manufacturer && (
-                            <>
-                              <span className="text-slate-300">•</span>
-                              <span>Hãng: <strong className="text-slate-700 font-medium font-sans">{device.manufacturer}</strong></span>
-                            </>
-                          )}
-                          {device.origin && (
-                            <>
-                              <span className="text-slate-300">•</span>
-                              <span>Xuất xứ: <strong className="text-slate-600 font-medium font-sans">{device.origin}</strong></span>
-                            </>
-                          )}
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
-            {/* 1. Primary System Account Profile */}
-            <div className="flex items-center gap-2.5 bg-slate-50 border border-slate-200 pl-3 pr-2 py-1.5 rounded-2xl">
-              <div className="w-7 h-7 bg-blue-600 text-white rounded-xl flex items-center justify-center font-bold text-xs uppercase shadow-sm">
-                {appUser?.email?.charAt(0).toUpperCase() || 'U'}
-              </div>
-              <div className="text-left hidden md:block">
-                <div className="text-xs font-bold text-slate-800 line-clamp-1 max-w-[120px] leading-tight">
-                  Quản trị viên
-                </div>
-                <div className="text-[10px] text-slate-400 font-mono line-clamp-1 max-w-[125px] leading-none mt-0.5">
-                  {appUser?.email}
-                </div>
-              </div>
-              <button
-                onClick={handleSignOutSystem}
-                className="p-1.5 text-slate-400 hover:text-red-500 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
-                title="Đăng xuất khỏi hệ thống"
-              >
-                <X size={15} />
-              </button>
-            </div>
-
-
-
-            <button 
-              onClick={handleExportExcel}
-              className="flex items-center gap-2 px-4 py-2 border border-slate-200 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors"
-            >
-              <Download size={16} />
-              Xuất Excel
-            </button>
-            <button 
-              onClick={() => {
-                setEditingDevice(null);
-                setIsModalOpen(true);
-              }}
-              className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium shadow-lg shadow-blue-200 hover:bg-blue-700 transition-all font-sans"
-            >
-              + Thêm thiết bị
-            </button>
-          </div>
-        </header>
-
-        {/* Firestore Permission Banner */}
-        {firestorePermissionError && (
-          <div className="bg-amber-50 border-b border-amber-200 px-8 py-3 flex flex-wrap items-center justify-between gap-3 text-xs text-amber-900 shrink-0">
-            <div className="flex items-center gap-2.5">
-              <AlertTriangle className="text-amber-600 shrink-0" size={18} />
-              <span>
-                <strong>Đồng bộ đám mây Firestore:</strong> Firebase Console đang chặn quyền truy cập (Permission Denied) cho dự án <code className="bg-amber-100 text-amber-900 px-1.5 py-0.5 rounded font-mono font-bold">quanlythietbiyte-babd8</code>. Dữ liệu hiện được lưu trữ an toàn cục bộ.
-              </span>
-            </div>
             <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setShowFirestoreRulesModal(true)}
-                className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl transition-colors cursor-pointer text-xs shadow-xs inline-flex items-center gap-1.5"
-              >
-                <ShieldCheck size={14} />
-                Xem Rules & Hướng dẫn
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setLoadingData(true);
-                  setFirestorePermissionError(false);
-                  setSyncCounter(c => c + 1);
-                }}
-                className="px-3 py-1.5 bg-white hover:bg-amber-100 border border-amber-300 text-amber-800 font-semibold rounded-xl transition-colors cursor-pointer text-xs"
-              >
-                Thử kết nối lại
-              </button>
+              <h1 className="text-base font-bold tracking-tight text-slate-900 leading-none">
+                MedEquip <span className="text-blue-600 font-bold">Pro</span>
+              </h1>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200 uppercase tracking-wider">
+                Phòng X-Quang
+              </span>
             </div>
+            <p className="text-[10px] text-slate-400 font-medium mt-0.5 hidden sm:block">
+              Hệ thống quản lý thiết bị, kiểm định & bảo trì y tế
+            </p>
           </div>
-        )}
+        </div>
 
-        {/* Content Body */}
-        <div className="flex-1 p-8 overflow-hidden flex flex-col gap-6">
+        {/* Global Live Search Bar */}
+        <div className="flex-1 max-w-xl mx-2 relative hidden md:block">
+          <div className="relative">
+            <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400">
+              <Search size={16} />
+            </span>
+            <input 
+              type="text" 
+              placeholder="Tìm kiếm thiết bị (tên máy, model, hãng, số serial, người quản lý...)" 
+              className="w-full pl-10 pr-4 py-2 bg-slate-100 hover:bg-slate-100/80 focus:bg-white border border-slate-200/60 focus:border-blue-500 rounded-xl text-xs sm:text-sm focus:ring-2 focus:ring-blue-100 outline-none transition-all placeholder:text-slate-400 font-sans"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              onFocus={() => setIsSearchFocused(true)}
+              onBlur={() => setTimeout(() => setIsSearchFocused(false), 200)}
+            />
+            {isSearchFocused && matchingSuggestions.length > 0 && (
+              <div className="absolute left-0 right-0 mt-2 max-h-96 overflow-y-auto bg-white border border-slate-200/80 rounded-2xl shadow-2xl z-50 p-3 divide-y divide-slate-100 animate-in fade-in slide-in-from-top-2 duration-150">
+                <div className="px-3 py-1.5 text-slate-400 text-[10px] font-bold uppercase tracking-wider">
+                  Gợi ý thiết bị phù hợp ({matchingSuggestions.length})
+                </div>
+                <div className="pt-2 space-y-0.5">
+                  {matchingSuggestions.map((device) => (
+                    <button
+                      key={device.id}
+                      type="button"
+                      onMouseDown={() => {
+                        setEditingDevice(device);
+                        setIsModalOpen(true);
+                        setSearchTerm('');
+                      }}
+                      className="w-full text-left p-2.5 hover:bg-slate-50 rounded-xl transition-all flex flex-col gap-1 cursor-pointer focus:bg-slate-50 outline-none group"
+                    >
+                      <div className="flex items-center justify-between w-full">
+                        <span className="font-bold text-slate-800 text-sm group-hover:text-blue-600 transition-colors leading-snug">
+                          {device.name}
+                        </span>
+                        <span className="text-[9px] font-mono bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-bold uppercase shrink-0 ml-2">
+                          S/N: {device.serialNumber || 'N/A'}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-x-1.5 text-[11px] text-slate-500 leading-none">
+                        <span>Model: <strong className="text-slate-700 font-medium font-sans">{device.model || 'Chưa rõ'}</strong></span>
+                        {device.manufacturer && (
+                          <>
+                            <span className="text-slate-300">•</span>
+                            <span>Hãng: <strong className="text-slate-700 font-medium font-sans">{device.manufacturer}</strong></span>
+                          </>
+                        )}
+                        {device.origin && (
+                          <>
+                            <span className="text-slate-300">•</span>
+                            <span>Xuất xứ: <strong className="text-slate-600 font-medium font-sans">{device.origin}</strong></span>
+                          </>
+                        )}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Action CTAs, Quick Alert & Profile */}
+        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+          {/* Quick Alert Notification Chip */}
+          {stats.expired > 0 ? (
+            <button
+              onClick={() => {
+                setActiveTab('inventory');
+                setFilterStatus('expired');
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-xs font-bold transition-all shadow-xs cursor-pointer animate-pulse"
+              title="Nhấn để xem ngay danh sách thiết bị quá hạn"
+            >
+              <AlertTriangle size={14} className="text-red-600 shrink-0" />
+              <span>{stats.expired} Quá hạn</span>
+            </button>
+          ) : stats.warning > 0 ? (
+            <button
+              onClick={() => {
+                setActiveTab('inventory');
+                setFilterStatus('warning');
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-orange-50 hover:bg-orange-100 text-orange-700 border border-orange-200 text-xs font-bold transition-all shadow-xs cursor-pointer"
+              title="Nhấn để xem các thiết bị cận hạn"
+            >
+              <Clock size={14} className="text-orange-600 shrink-0" />
+              <span>{stats.warning} Cận hạn</span>
+            </button>
+          ) : null}
+
+          <button 
+            onClick={handleExportExcel}
+            className="flex items-center gap-1.5 px-3 py-2 border border-slate-200 rounded-xl text-xs sm:text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer bg-white shadow-xs"
+            title="Xuất bảng thiết bị ra file Excel"
+          >
+            <Download size={15} />
+            <span className="hidden sm:inline">Xuất Excel</span>
+          </button>
+
+          <button 
+            onClick={() => {
+              setEditingDevice(null);
+              setIsModalOpen(true);
+            }}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold shadow-md shadow-blue-500/20 transition-all font-sans cursor-pointer inline-flex items-center gap-1.5"
+          >
+            <Plus size={16} />
+            <span>Thêm thiết bị</span>
+          </button>
+
+          {/* User Account Profile */}
+          <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 pl-2 pr-1.5 py-1 rounded-xl">
+            <div className="w-7 h-7 bg-blue-600 text-white rounded-lg flex items-center justify-center font-bold text-xs uppercase shadow-xs shrink-0">
+              {appUser?.email?.charAt(0).toUpperCase() || 'U'}
+            </div>
+            <div className="text-left hidden xl:block">
+              <div className="text-xs font-bold text-slate-800 line-clamp-1 max-w-[110px] leading-tight">
+                Quản trị viên
+              </div>
+              <div className="text-[10px] text-slate-400 font-mono line-clamp-1 max-w-[115px] leading-none mt-0.5">
+                {appUser?.email}
+              </div>
+            </div>
+            <button
+              onClick={handleSignOutSystem}
+              className="p-1.5 text-slate-400 hover:text-red-500 rounded-lg hover:bg-slate-200/60 transition-colors cursor-pointer"
+              title="Đăng xuất khỏi hệ thống"
+            >
+              <LogOut size={14} />
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {/* 2. HORIZONTAL MENU BAR: Clean navigation tabs stretching across the screen */}
+      <nav className="bg-white border-b border-slate-200 px-4 sm:px-6 lg:px-8 py-2 shrink-0 flex items-center justify-between gap-4 overflow-x-auto custom-scrollbar shadow-xs">
+        <div className="flex items-center gap-1.5 sm:gap-2">
+          <NavTabButton 
+            active={activeTab === 'inventory'} 
+            onClick={() => setActiveTab('inventory')} 
+            icon={<LayoutDashboard size={18} />} 
+            label="Danh mục thiết bị" 
+            badge={devices.length}
+          />
+          <NavTabButton 
+            active={activeTab === 'charts'} 
+            onClick={() => setActiveTab('charts')} 
+            icon={<BarChart3 size={18} />} 
+            label="Biểu đồ thống kê" 
+          />
+          <NavTabButton 
+            active={activeTab === 'maintenance'} 
+            onClick={() => setActiveTab('maintenance')} 
+            icon={<Calendar size={18} />} 
+            label="Lịch bảo trì" 
+          />
+          <NavTabButton 
+            active={activeTab === 'legal'} 
+            onClick={() => setActiveTab('legal')} 
+            icon={<ShieldCheck size={18} />} 
+            label="Hồ sơ pháp lý" 
+          />
+          <NavTabButton 
+            active={activeTab === 'settings'} 
+            onClick={() => setActiveTab('settings')} 
+            icon={<Settings size={18} />} 
+            label="Cài đặt hệ thống" 
+          />
+        </div>
+
+        {/* Quick summary tracker on the right side of nav bar */}
+        <div className="hidden lg:flex items-center gap-4 text-xs font-medium text-slate-500 shrink-0">
+          <div className="flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-slate-400"></span>
+            <span>Tổng: <strong className="text-slate-800">{stats.total}</strong></span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-red-500"></span>
+            <span>Quá hạn: <strong className="text-red-600">{stats.expired}</strong></span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-orange-500"></span>
+            <span>Cận hạn: <strong className="text-orange-600">{stats.warning}</strong></span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-green-500"></span>
+            <span>Hợp lệ: <strong className="text-green-600">{stats.ok}</strong></span>
+          </div>
+        </div>
+      </nav>
+
+      {/* Firestore Permission Banner */}
+      {firestorePermissionError && (
+        <div className="bg-amber-50 border-b border-amber-200 px-4 sm:px-6 lg:px-8 py-3 flex flex-wrap items-center justify-between gap-3 text-xs text-amber-900 shrink-0">
+          <div className="flex items-center gap-2.5">
+            <AlertTriangle className="text-amber-600 shrink-0" size={18} />
+            <span>
+              <strong>Đồng bộ đám mây Firestore:</strong> Firebase Console đang chặn quyền truy cập (Permission Denied) cho dự án <code className="bg-amber-100 text-amber-900 px-1.5 py-0.5 rounded font-mono font-bold">quanlythietbiyte-babd8</code>. Dữ liệu hiện được lưu trữ an toàn cục bộ.
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowFirestoreRulesModal(true)}
+              className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl transition-colors cursor-pointer text-xs shadow-xs inline-flex items-center gap-1.5"
+            >
+              <ShieldCheck size={14} />
+              Xem Rules & Hướng dẫn
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setLoadingData(true);
+                setFirestorePermissionError(false);
+                setSyncCounter(c => c + 1);
+              }}
+              className="px-3 py-1.5 bg-white hover:bg-amber-100 border border-amber-300 text-amber-800 font-semibold rounded-xl transition-colors cursor-pointer text-xs"
+            >
+              Thử kết nối lại
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 3. MAIN CONTENT BODY: Full-width container */}
+      <main className="flex-1 px-4 sm:px-6 lg:px-8 py-5 overflow-y-auto flex flex-col gap-5 w-full max-w-full custom-scrollbar">
           {activeTab === 'inventory' ? (
             <>
-              {/* Statistics Grid */}
-              <div className="grid grid-cols-4 gap-6 shrink-0">
-                <StatCardV2 label="Tổng thiết bị" value={stats.total} />
-                <StatCardV2 
-                  label="Quá hạn kiểm định" 
-                  value={stats.expired} 
-                  highlightColor="text-red-600" 
-                  ringColor="ring-red-100" 
-                />
-                <StatCardV2 
-                  label="Sắp cận hạn" 
-                  value={stats.warning} 
-                  highlightColor="text-orange-600" 
-                  ringColor="ring-orange-100" 
-                />
-                <StatCardV2 
-                  label="Vận hành tốt" 
-                  value={stats.ok} 
-                  highlightColor="text-green-600" 
-                />
-              </div>
-
-              {/* Analytics & Recharts Charts Banner Widget */}
-              <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-blue-950 text-white rounded-2xl p-4 px-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm shrink-0">
-                <div className="flex items-center gap-3.5">
-                  <div className="p-2.5 bg-blue-500/20 text-blue-400 border border-blue-400/30 rounded-xl shrink-0">
-                    <BarChart3 size={20} className="stroke-[2.5]" />
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h4 className="text-xs font-bold tracking-tight text-white uppercase">
-                        Biểu đồ Thống kê Hạn Kiểm định & Bảo trì (Recharts)
-                      </h4>
-                      <span className="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase bg-blue-500/30 text-blue-300 border border-blue-400/30">
-                        Trực quan
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-slate-300 mt-0.5 leading-relaxed">
-                      Theo dõi trực quan số ngày còn lại đến hạn kiểm định, biểu đồ tròn tỉ lệ an toàn và danh sách máy cần bảo trì khẩn cấp.
-                    </p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('charts')}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl transition-all shadow-sm shadow-blue-500/30 cursor-pointer inline-flex items-center gap-2 shrink-0 self-start sm:self-auto hover:scale-[1.02] active:scale-[0.98]"
-                >
-                  <BarChart3 size={14} />
-                  <span>Mở biểu đồ phân tích</span>
-                  <ChevronRight size={14} />
-                </button>
-              </div>
-
-              {!isDriveConnected && (
-                <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm shrink-0">
-                  <div className="flex items-start sm:items-center gap-3">
-                    <div className="p-2.5 bg-blue-100 text-blue-600 rounded-xl shrink-0">
-                      <Cloud size={20} className="animate-pulse" />
-                    </div>
-                    <div>
-                      <h4 className="text-sm font-bold text-slate-800 leading-snug">Cơ sở dữ liệu đám mây ngoại tuyến</h4>
-                      <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                        Bạn đang xem dữ liệu ở chế độ lưu trữ mô phỏng ngoại tuyến. Hãy <strong>Đăng nhập tài khoản Google</strong> để kích hoạt đồng bộ dữ liệu với Firestore Cloud bền lâu, lưu minh chứng Drive, và tự động hóa hồ sơ.
-                      </p>
-                    </div>
-                  </div>
-                  <button 
-                    onClick={handleConnectDrive}
-                    disabled={authLoading}
-                    className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer shadow-sm shadow-blue-100 shrink-0 inline-flex items-center gap-2 font-sans"
-                  >
-                    {authLoading ? (
-                      <Loader2 size={12} className="animate-spin" />
-                    ) : (
-                      <svg className="w-3.5 h-3.5" viewBox="0 0 24 24">
-                        <path
-                          fill="currentColor"
-                          d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                        />
-                        <path
-                          fill="currentColor"
-                          d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                        />
-                        <path
-                          fill="currentColor"
-                          d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
-                        />
-                        <path
-                          fill="currentColor"
-                          d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
-                        />
-                      </svg>
-                    )}
-                    <span>Đăng nhập ngay</span>
-                  </button>
-                </div>
-              )}
-
-              {/* Filtering & Table Container */}
+              {/* Filtering & Table Container - Clean Full Height Table */}
               <div className="flex-1 bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col min-h-0 overflow-hidden">
                 {/* Table Header / Filter Bar */}
-                <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/30">
-                  <div className="flex items-center gap-2">
-                    <Filter size={14} className="text-slate-400 mr-2" />
-                    <FilterButton active={filterStatus === 'all'} onClick={() => setFilterStatus('all')} label="Tất cả" />
-                    <FilterButton active={filterStatus === 'expired'} onClick={() => setFilterStatus('expired')} label="Quá hạn" />
-                    <FilterButton active={filterStatus === 'warning'} onClick={() => setFilterStatus('warning')} label="Sắp hết hạn" />
-                    <FilterButton active={filterStatus === 'ok'} onClick={() => setFilterStatus('ok')} label="Hợp lệ" />
+                <div className="px-5 py-3.5 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3 bg-slate-50/50">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Filter size={14} className="text-slate-400 mr-1" />
+                    <FilterButton active={filterStatus === 'all'} onClick={() => setFilterStatus('all')} label={`Tất cả (${stats.total})`} />
+                    <FilterButton active={filterStatus === 'expired'} onClick={() => setFilterStatus('expired')} label={`Quá hạn (${stats.expired})`} />
+                    <FilterButton active={filterStatus === 'warning'} onClick={() => setFilterStatus('warning')} label={`Sắp hết hạn (${stats.warning})`} />
+                    <FilterButton active={filterStatus === 'ok'} onClick={() => setFilterStatus('ok')} label={`Hợp lệ (${stats.ok})`} />
                   </div>
-                  <div className="text-xs text-slate-400 font-medium font-mono uppercase">
-                    {filteredDevices.length} Thiết bị
+                  
+                  <div className="text-xs text-slate-500 font-semibold font-mono uppercase tracking-wider">
+                    Hiển thị {filteredDevices.length} / {devices.length} Thiết bị
                   </div>
                 </div>
 
-                {/* Scrollable Table */}
-                <div className="overflow-auto flex-1 custom-scrollbar">
-                  <table className="w-full text-left border-collapse">
-                    <thead className="sticky top-0 bg-slate-50 border-b border-slate-200 z-10">
+                {/* Scrollable Table - Stretches Full Width */}
+                <div className="overflow-x-auto flex-1 custom-scrollbar">
+                  <table className="w-full text-left border-collapse min-w-[1050px]">
+                    <thead className="sticky top-0 bg-slate-50/95 backdrop-blur-xs border-b border-slate-200 z-10 shadow-xs">
                       <tr>
-                        <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Thiết bị / Model</th>
-                        <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Serial / Xuất xứ</th>
-                        <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Giấy phép (GCP)</th>
-                        <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Kiểm định (GKĐ)</th>
-                        <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Bảo trì kế tiếp</th>
-                        <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider text-right">Thao tác</th>
+                        <th className="px-5 py-3.5 text-xs font-bold text-slate-500 uppercase tracking-wider w-[24%] min-w-[200px]">Thiết bị / Model</th>
+                        <th className="px-4 py-3.5 text-xs font-bold text-slate-500 uppercase tracking-wider w-[14%] min-w-[130px] whitespace-nowrap">Serial / Xuất xứ</th>
+                        <th className="px-4 py-3.5 text-xs font-bold text-slate-500 uppercase tracking-wider w-[13%] min-w-[125px] whitespace-nowrap">Giấy phép (GCP)</th>
+                        <th className="px-4 py-3.5 text-xs font-bold text-slate-500 uppercase tracking-wider w-[13%] min-w-[125px] whitespace-nowrap">Kiểm định (GKĐ)</th>
+                        <th className="px-4 py-3.5 text-xs font-bold text-slate-500 uppercase tracking-wider w-[13%] min-w-[125px] whitespace-nowrap">Kiểm xạ (GKX)</th>
+                        <th className="px-4 py-3.5 text-xs font-bold text-slate-500 uppercase tracking-wider w-[13%] min-w-[130px] whitespace-nowrap">Bảo trì kế tiếp</th>
+                        <th className="px-5 py-3.5 text-xs font-bold text-slate-500 uppercase tracking-wider w-[10%] min-w-[120px] text-right whitespace-nowrap">Thao tác</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -2165,6 +2207,7 @@ const DeviceDashboard: React.FC = () => {
                             onShowNote={(d) => setSelectedNoteDevice(d)}
                             warningDaysGCP={warningDaysGCP}
                             warningDaysGKD={warningDaysGKD}
+                            warningDaysGKX={warningDaysGKX}
                           />
                         ))}
                       </AnimatePresence>
@@ -2199,6 +2242,7 @@ const DeviceDashboard: React.FC = () => {
               devices={devices}
               warningDaysGCP={warningDaysGCP}
               warningDaysGKD={warningDaysGKD}
+              warningDaysGKX={warningDaysGKX}
               warningDaysBD={warningDaysBD}
               onSelectDevice={(d) => {
                 setEditingDevice(d);
@@ -2231,6 +2275,8 @@ const DeviceDashboard: React.FC = () => {
               setWarningDaysGCP={setWarningDaysGCP}
               warningDaysGKD={warningDaysGKD}
               setWarningDaysGKD={setWarningDaysGKD}
+              warningDaysGKX={warningDaysGKX}
+              setWarningDaysGKX={setWarningDaysGKX}
               warningDaysBD={warningDaysBD}
               setWarningDaysBD={setWarningDaysBD}
               telegramBotToken={telegramBotToken}
@@ -2301,10 +2347,7 @@ const DeviceDashboard: React.FC = () => {
               triggerAutoScan={triggerAutoScan}
             />
           )}
-        </div>
-
-
-      </main>
+        </main>
 
       {/* Device Form Modal */}
       <AnimatePresence>
@@ -2637,10 +2680,13 @@ service cloud.firestore {
         && (!('yearOfProduction' in data) || data.yearOfProduction is int || data.yearOfProduction is float || (data.yearOfProduction is string && data.yearOfProduction.size() <= 32))
         && (!('expiryGCP' in data) || (data.expiryGCP is string && data.expiryGCP.size() <= 64))
         && (!('expiryGKD' in data) || (data.expiryGKD is string && data.expiryGKD.size() <= 64))
+        && (!('expiryGKX' in data) || (data.expiryGKX is string && data.expiryGKX.size() <= 64))
         && (!('gcpIssueDate' in data) || (data.gcpIssueDate is string && data.gcpIssueDate.size() <= 64))
         && (!('gcpPeriod' in data) || data.gcpPeriod is int || data.gcpPeriod is float || (data.gcpPeriod is string && data.gcpPeriod.size() <= 32))
         && (!('gkdIssueDate' in data) || (data.gkdIssueDate is string && data.gkdIssueDate.size() <= 64))
         && (!('gkdPeriod' in data) || data.gkdPeriod is int || data.gkdPeriod is float || (data.gkdPeriod is string && data.gkdPeriod.size() <= 32))
+        && (!('gkxIssueDate' in data) || (data.gkxIssueDate is string && data.gkxIssueDate.size() <= 64))
+        && (!('gkxPeriod' in data) || data.gkxPeriod is int || data.gkxPeriod is float || (data.gkxPeriod is string && data.gkxPeriod.size() <= 32))
         && (!('manager' in data) || (data.manager is string && data.manager.size() <= 128))
         && (!('lastMaintenance' in data) || (data.lastMaintenance is string && data.lastMaintenance.size() <= 64))
         && (!('maintenancePeriod' in data) || data.maintenancePeriod is int || data.maintenancePeriod is float || (data.maintenancePeriod is string && data.maintenancePeriod.size() <= 32))
@@ -2671,6 +2717,7 @@ service cloud.firestore {
         && (!('telegramEnabled' in data) || (data.telegramEnabled is bool))
         && (!('warningDaysGCP' in data) || (data.warningDaysGCP is int) || (data.warningDaysGCP is float) || (data.warningDaysGCP is string))
         && (!('warningDaysGKD' in data) || (data.warningDaysGKD is int) || (data.warningDaysGKD is float) || (data.warningDaysGKD is string))
+        && (!('warningDaysGKX' in data) || (data.warningDaysGKX is int) || (data.warningDaysGKX is float) || (data.warningDaysGKX is string))
         && (!('warningDaysBD' in data) || (data.warningDaysBD is int) || (data.warningDaysBD is float) || (data.warningDaysBD is string))
         && (!('recipientEmail' in data) || (data.recipientEmail is string && data.recipientEmail.size() <= 256))
         && (!('isSubscribed' in data) || (data.isSubscribed is bool))
@@ -2878,10 +2925,13 @@ const DeviceForm = ({ initialData, onSave, onCancel }: { initialData?: Device, o
       yearOfProduction: new Date().getFullYear(),
       expiryGCP: '',
       expiryGKD: '',
+      expiryGKX: '',
       gcpIssueDate: '',
       gcpPeriod: 12,
       gkdIssueDate: '',
       gkdPeriod: 12,
+      gkxIssueDate: '',
+      gkxPeriod: 12,
       lastMaintenance: '',
       maintenancePeriod: 6,
       notes: '',
@@ -2904,6 +2954,16 @@ const DeviceForm = ({ initialData, onSave, onCancel }: { initialData?: Device, o
     if (updates.gkdIssueDate !== undefined || updates.gkdPeriod !== undefined) {
       if (nextData.gkdIssueDate && nextData.gkdPeriod) {
         nextData.expiryGKD = calculateExpiryFromIssue(nextData.gkdIssueDate, nextData.gkdPeriod);
+      }
+    }
+    setFormData(nextData);
+  };
+
+  const handleGkxChange = (updates: { gkxIssueDate?: string; gkxPeriod?: number; expiryGKX?: string }) => {
+    const nextData = { ...formData, ...updates };
+    if (updates.gkxIssueDate !== undefined || updates.gkxPeriod !== undefined) {
+      if (nextData.gkxIssueDate && nextData.gkxPeriod) {
+        nextData.expiryGKX = calculateExpiryFromIssue(nextData.gkxIssueDate, nextData.gkxPeriod);
       }
     }
     setFormData(nextData);
@@ -3086,6 +3146,45 @@ const DeviceForm = ({ initialData, onSave, onCancel }: { initialData?: Device, o
           </div>
         </div>
 
+        {/* Kiểm xạ GKX Section */}
+        <div className="p-4 bg-slate-50/50 rounded-2xl border border-slate-100 space-y-3">
+          <div className="text-xs font-bold text-slate-700 font-sans flex items-center gap-2">
+            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-100 text-[10px] text-amber-700 font-bold">3</span>
+            <span>THÔNG TIN KIỂM XẠ (GKX)</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label className={labelClass}>Ngày kiểm xạ thực tế</label>
+              <input 
+                type="date"
+                className={inputClass}
+                value={formData.gkxIssueDate || ''}
+                onChange={(e) => handleGkxChange({ gkxIssueDate: e.target.value })}
+              />
+            </div>
+            <div>
+              <label className={labelClass}>Thời hạn hiệu lực (tháng)</label>
+              <input 
+                type="number"
+                min="1"
+                className={inputClass}
+                value={formData.gkxPeriod !== undefined ? formData.gkxPeriod : ''}
+                onChange={(e) => handleGkxChange({ gkxPeriod: e.target.value ? parseInt(e.target.value) : undefined })}
+                placeholder="Ví dụ: 12, 24, 36..."
+              />
+            </div>
+            <div>
+              <label className={labelClass}>Hạn Kiểm xạ (GKX)</label>
+              <input 
+                type="date"
+                className={`${inputClass} bg-amber-50/30 border-amber-100 font-semibold text-amber-900`}
+                value={formData.expiryGKX || ''}
+                onChange={(e) => handleGkxChange({ expiryGKX: e.target.value })}
+              />
+            </div>
+          </div>
+        </div>
+
         <div className="col-span-2">
           <label className={labelClass}>Lần bảo trì cuối cùng</label>
           <input 
@@ -3126,17 +3225,44 @@ const DeviceForm = ({ initialData, onSave, onCancel }: { initialData?: Device, o
   );
 };
 
-const SidebarLink = ({ icon, label, onClick, active = false }: { icon: React.ReactNode, label: string, onClick?: () => void, active?: boolean }) => (
+const NavTabButton = ({ 
+  icon, 
+  label, 
+  onClick, 
+  active = false, 
+  badge,
+  badgeColor = "bg-slate-100 text-slate-600"
+}: { 
+  icon: React.ReactNode, 
+  label: string, 
+  onClick?: () => void, 
+  active?: boolean,
+  badge?: string | number,
+  badgeColor?: string
+}) => (
   <button 
     onClick={onClick}
-    className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg font-medium transition-all ${
-      active ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+    className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all cursor-pointer whitespace-nowrap select-none ${
+      active 
+        ? 'bg-blue-600 text-white shadow-sm shadow-blue-500/30' 
+        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
     }`}
   >
-    {icon}
-    <span className="text-sm">{label}</span>
+    <span className={active ? 'text-white' : 'text-slate-400'}>
+      {icon}
+    </span>
+    <span>{label}</span>
+    {badge !== undefined && (
+      <span className={`ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+        active ? 'bg-white/20 text-white' : badgeColor
+      }`}>
+        {badge}
+      </span>
+    )}
   </button>
 );
+
+const SidebarLink = NavTabButton;
 
 const StatCardV2 = ({ label, value, highlightColor = "text-slate-900", ringColor = "" }: { label: string, value: number, highlightColor?: string, ringColor?: string }) => (
   <div className={`bg-white p-5 rounded-2xl border border-slate-200 shadow-sm ${ringColor ? `ring-1 ${ringColor}` : ''}`}>
@@ -3162,18 +3288,19 @@ const FilterButton = ({ active, onClick, label }: { active: boolean, onClick: ()
 
 interface DeviceRowProps {
   device: Device;
-  onConfirm: (id: string, type: 'GCP' | 'GKD' | 'BD', manualDate?: string, issueDate?: string, period?: number) => void;
+  onConfirm: (id: string, type: 'GCP' | 'GKD' | 'GKX' | 'BD', manualDate?: string, issueDate?: string, period?: number) => void;
   onDelete: (id: string) => void;
   onEdit: (device: Device) => void;
   onShowHistory: (device: Device) => void;
   onShowNote: (device: Device) => void;
   warningDaysGCP?: number;
   warningDaysGKD?: number;
+  warningDaysGKX?: number;
   key?: any;
 }
 
-const DeviceRowV2 = ({ device, onConfirm, onDelete, onEdit, onShowHistory, onShowNote, warningDaysGCP = 75, warningDaysGKD = 30 }: DeviceRowProps) => {
-  const [editingField, setEditingField] = useState<'GCP' | 'GKD' | null>(null);
+const DeviceRowV2 = ({ device, onConfirm, onDelete, onEdit, onShowHistory, onShowNote, warningDaysGCP = 75, warningDaysGKD = 30, warningDaysGKX = 30 }: DeviceRowProps) => {
+  const [editingField, setEditingField] = useState<'GCP' | 'GKD' | 'GKX' | null>(null);
   const [tempDate, setTempDate] = useState('');
   const [showMenu, setShowMenu] = useState(false);
   const menuContainerRef = React.useRef<HTMLDivElement>(null);
@@ -3189,35 +3316,52 @@ const DeviceRowV2 = ({ device, onConfirm, onDelete, onEdit, onShowHistory, onSho
 
   const gcpDays = getDaysRemaining(device.expiryGCP);
   const gkdDays = getDaysRemaining(device.expiryGKD);
+  const gkxDays = getDaysRemaining(device.expiryGKX);
 
   const getDayBadge = (days: number | null, warningDays: number) => {
     if (days === null) return null;
     if (days < 0) return (
-      <div className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] bg-red-100 text-red-700 font-bold uppercase mt-1 tracking-tighter">
+      <div className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] bg-red-100 text-red-700 font-bold uppercase mt-1 tracking-tighter whitespace-nowrap">
         Quá hạn {Math.abs(days)} ngày
       </div>
     );
     if (days <= warningDays) return (
-      <div className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] bg-orange-100 text-orange-700 font-bold uppercase mt-1 tracking-tighter">
+      <div className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] bg-orange-100 text-orange-700 font-bold uppercase mt-1 tracking-tighter whitespace-nowrap">
         Còn {days} ngày
       </div>
     );
     return (
-      <div className="text-[10px] text-green-600 font-bold uppercase mt-1">
+      <div className="text-[10px] text-green-600 font-bold uppercase mt-1 whitespace-nowrap">
         Còn {days} ngày
       </div>
     );
   };
 
-  const DateCell = ({ label, date, days, type, warningDays }: { label: string, date: string, days: number | null, type: 'GCP' | 'GKD', warningDays: number }) => {
-    const [issueDate, setIssueDate] = useState(type === 'GCP' ? (device.gcpIssueDate || '') : (device.gkdIssueDate || ''));
-    const [period, setPeriod] = useState<number>(type === 'GCP' ? (device.gcpPeriod || 12) : (device.gkdPeriod || 12));
+  const DateCell = ({ label, date, days, type, warningDays }: { label: string, date: string, days: number | null, type: 'GCP' | 'GKD' | 'GKX', warningDays: number }) => {
+    const [issueDate, setIssueDate] = useState(
+      type === 'GCP' ? (device.gcpIssueDate || '') : 
+      type === 'GKD' ? (device.gkdIssueDate || '') : 
+      (device.gkxIssueDate || '')
+    );
+    const [period, setPeriod] = useState<number>(
+      type === 'GCP' ? (device.gcpPeriod || 12) : 
+      type === 'GKD' ? (device.gkdPeriod || 12) : 
+      (device.gkxPeriod || 12)
+    );
     const [localTempDate, setLocalTempDate] = useState(date || '');
 
     React.useEffect(() => {
       if (editingField === type) {
-        setIssueDate(type === 'GCP' ? (device.gcpIssueDate || '') : (device.gkdIssueDate || ''));
-        setPeriod(type === 'GCP' ? (device.gcpPeriod || 12) : (device.gkdPeriod || 12));
+        setIssueDate(
+          type === 'GCP' ? (device.gcpIssueDate || '') : 
+          type === 'GKD' ? (device.gkdIssueDate || '') : 
+          (device.gkxIssueDate || '')
+        );
+        setPeriod(
+          type === 'GCP' ? (device.gcpPeriod || 12) : 
+          type === 'GKD' ? (device.gkdPeriod || 12) : 
+          (device.gkxPeriod || 12)
+        );
         setLocalTempDate(date || '');
       }
     }, [editingField, type, date]);
@@ -3241,8 +3385,8 @@ const DeviceRowV2 = ({ device, onConfirm, onDelete, onEdit, onShowHistory, onSho
     return (
       <div className="group/cell relative select-none">
         <div className="flex flex-col">
-          <div className="flex items-center gap-2">
-            <div className={`text-sm ${getStatusColor(days, warningDays)}`}>
+          <div className="flex items-center gap-1.5 whitespace-nowrap">
+            <div className={`text-sm font-semibold tracking-tight whitespace-nowrap ${getStatusColor(days, warningDays)}`}>
               {formatDisplayDate(date)}
             </div>
             <button 
@@ -3256,13 +3400,18 @@ const DeviceRowV2 = ({ device, onConfirm, onDelete, onEdit, onShowHistory, onSho
             </button>
           </div>
           {type === 'GCP' && device.gcpIssueDate && (
-            <div className="text-[10px] text-slate-400 mt-0.5 leading-tight font-medium">
-              Gia hạn: {formatDisplayDate(device.gcpIssueDate)} ({device.gcpPeriod} tháng)
+            <div className="text-[10px] text-slate-400 mt-0.5 leading-tight font-medium whitespace-nowrap">
+              Gia hạn: {formatDisplayDate(device.gcpIssueDate)} ({device.gcpPeriod} th)
             </div>
           )}
           {type === 'GKD' && device.gkdIssueDate && (
-            <div className="text-[10px] text-slate-400 mt-0.5 leading-tight font-medium">
-              Kiểm định: {formatDisplayDate(device.gkdIssueDate)} ({device.gkdPeriod} tháng)
+            <div className="text-[10px] text-slate-400 mt-0.5 leading-tight font-medium whitespace-nowrap">
+              Kiểm định: {formatDisplayDate(device.gkdIssueDate)} ({device.gkdPeriod} th)
+            </div>
+          )}
+          {type === 'GKX' && device.gkxIssueDate && (
+            <div className="text-[10px] text-slate-400 mt-0.5 leading-tight font-medium whitespace-nowrap">
+              Kiểm xạ: {formatDisplayDate(device.gkxIssueDate)} ({device.gkxPeriod} th)
             </div>
           )}
         </div>
@@ -3272,7 +3421,7 @@ const DeviceRowV2 = ({ device, onConfirm, onDelete, onEdit, onShowHistory, onSho
           <div className="absolute top-0 left-0 z-35 bg-white p-4 shadow-2xl rounded-2xl border border-slate-200/80 flex flex-col gap-3 min-w-[270px]">
             <div className="flex items-center justify-between border-b border-slate-100 pb-2">
               <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider font-sans">
-                {type === 'GCP' ? 'Cập nhật Giấy phép (GCP)' : 'Cập nhật Kiểm định (GKĐ)'}
+                {type === 'GCP' ? 'Cập nhật Giấy phép (GCP)' : type === 'GKD' ? 'Cập nhật Kiểm định (GKĐ)' : 'Cập nhật Kiểm xạ (GKX)'}
               </span>
               <button 
                 onClick={() => setEditingField(null)}
@@ -3285,7 +3434,7 @@ const DeviceRowV2 = ({ device, onConfirm, onDelete, onEdit, onShowHistory, onSho
             
             <div className="flex flex-col gap-1">
               <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">
-                {type === 'GCP' ? 'Ngày gia hạn gần nhất' : 'Ngày thực hiện kiểm định'}
+                {type === 'GCP' ? 'Ngày gia hạn gần nhất' : type === 'GKD' ? 'Ngày thực hiện kiểm định' : 'Ngày thực hiện kiểm xạ'}
               </label>
               <input 
                 type="date" 
@@ -3347,18 +3496,18 @@ const DeviceRowV2 = ({ device, onConfirm, onDelete, onEdit, onShowHistory, onSho
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="hover:bg-slate-50/50 transition-colors border-b border-slate-100"
+      className="hover:bg-slate-50/70 transition-colors border-b border-slate-100 group"
     >
-      <td className="px-6 py-4">
-        <div className="font-semibold text-sm flex items-center gap-2 flex-wrap">
-          {device.name}
+      <td className="px-5 py-4 align-top">
+        <div className="font-bold text-sm text-slate-800 flex items-center gap-2 flex-wrap">
+          <span>{device.name}</span>
           {((device.notesList && device.notesList.length > 0) || device.notes) && (
             <span 
               onClick={(e) => {
                 e.stopPropagation();
                 onShowNote(device);
               }}
-              className="inline-flex items-center gap-1.5 text-[10px] bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200/50 px-2.5 py-0.5 rounded-lg font-sans font-semibold cursor-pointer transition-all hover:scale-105 active:scale-95 shadow-sm"
+              className="inline-flex items-center gap-1.5 text-[10px] bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200/60 px-2.5 py-0.5 rounded-lg font-sans font-semibold cursor-pointer transition-all hover:scale-105 active:scale-95 shadow-xs whitespace-nowrap"
               title={`Nhấn để xem ghi chú chi tiết (${device.notesList ? `${device.notesList.length} ghi chú` : 'Ghi chú chi tiết'})`}
             >
               <FileText size={11} className="text-amber-600" />
@@ -3367,40 +3516,46 @@ const DeviceRowV2 = ({ device, onConfirm, onDelete, onEdit, onShowHistory, onSho
           )}
         </div>
         <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-          <span className="text-[11px] text-slate-400 font-mono uppercase tracking-tighter">{device.model}</span>
+          <span className="text-[11px] text-slate-500 font-mono uppercase font-medium">{device.model}</span>
           {device.manager && (
             <>
               <span className="text-slate-300">•</span>
-              <span className="inline-flex items-center text-[10px] bg-sky-50 text-sky-700 hover:bg-sky-100 border border-sky-100 px-1.5 py-0.5 rounded-md font-medium" title="Người phụ trách quản lý">
+              <span className="inline-flex items-center text-[10px] bg-sky-50 text-sky-700 hover:bg-sky-100 border border-sky-100 px-1.5 py-0.5 rounded-md font-medium whitespace-nowrap" title="Người phụ trách quản lý">
                 QL: {device.manager}
               </span>
             </>
           )}
         </div>
       </td>
-      <td className="px-6 py-4">
-        <div className="text-sm font-medium text-slate-600">{device.serialNumber}</div>
-        <div className="text-[11px] text-slate-400 italic">{device.origin} / {device.yearOfProduction}</div>
+      <td className="px-4 py-4 align-top whitespace-nowrap">
+        <div className="text-sm font-semibold text-slate-700 font-mono tracking-tight">{device.serialNumber}</div>
+        <div className="text-[11px] text-slate-400 mt-0.5 font-medium">{device.origin} • {device.yearOfProduction}</div>
       </td>
-      <td className="px-6 py-4">
+      <td className="px-4 py-4 align-top whitespace-nowrap">
         <DateCell type="GCP" date={device.expiryGCP} days={gcpDays} label="GCP" warningDays={warningDaysGCP} />
       </td>
-      <td className="px-6 py-4">
+      <td className="px-4 py-4 align-top whitespace-nowrap">
         <DateCell type="GKD" date={device.expiryGKD} days={gkdDays} label="GKD" warningDays={warningDaysGKD} />
       </td>
-      <td className="px-6 py-4">
-        <div className="text-sm text-slate-500 italic">
+      <td className="px-4 py-4 align-top whitespace-nowrap">
+        <DateCell type="GKX" date={device.expiryGKX || ''} days={gkxDays} label="GKX" warningDays={warningDaysGKX} />
+      </td>
+      <td className="px-4 py-4 align-top whitespace-nowrap">
+        <div className="text-sm text-slate-700 font-medium">
           {device.maintenancePeriod ? `Định kỳ ${device.maintenancePeriod} tháng` : 'Không bảo trì định kỳ'}
         </div>
         <div className="text-[10px] text-slate-400 font-medium uppercase mt-0.5">Lần cuối: {formatDisplayDate(device.lastMaintenance)}</div>
       </td>
-      <td className="px-6 py-4 text-right">
+      <td className="px-5 py-4 align-top text-right whitespace-nowrap">
         <div className="flex items-center justify-end gap-2 relative">
           <div className="relative">
             {(() => {
               const isWarningState = (gkdDays !== null && gkdDays >= 0 && gkdDays <= warningDaysGKD) ||
-                                     (gcpDays !== null && gcpDays >= 0 && gcpDays <= warningDaysGCP);
-              const isExpiredState = (gkdDays !== null && gkdDays < 0) || (gcpDays !== null && gcpDays < 0);
+                                     (gcpDays !== null && gcpDays >= 0 && gcpDays <= warningDaysGCP) ||
+                                     (gkxDays !== null && gkxDays >= 0 && gkxDays <= warningDaysGKX);
+              const isExpiredState = (gkdDays !== null && gkdDays < 0) || 
+                                     (gcpDays !== null && gcpDays < 0) || 
+                                     (gkxDays !== null && gkxDays < 0);
 
               let btnConfig = {
                 label: 'BÌNH THƯỜNG',
@@ -3707,6 +3862,8 @@ interface SettingsPanelProps {
   setWarningDaysGCP: (val: number) => void;
   warningDaysGKD: number;
   setWarningDaysGKD: (val: number) => void;
+  warningDaysGKX: number;
+  setWarningDaysGKX: (val: number) => void;
   warningDaysBD: number;
   setWarningDaysBD: (val: number) => void;
   telegramBotToken: string;
@@ -3721,8 +3878,8 @@ interface SettingsPanelProps {
   setRecipientEmail: (val: string) => void;
   isSubscribed: boolean;
   setIsSubscribed: (val: boolean) => void;
-  channels: { expiryGCP: boolean; expiryGKD: boolean; maintenance: boolean };
-  setChannels: React.Dispatch<React.SetStateAction<{ expiryGCP: boolean; expiryGKD: boolean; maintenance: boolean }>>;
+  channels: { expiryGCP: boolean; expiryGKD: boolean; expiryGKX: boolean; maintenance: boolean };
+  setChannels: React.Dispatch<React.SetStateAction<{ expiryGCP: boolean; expiryGKD: boolean; expiryGKX: boolean; maintenance: boolean }>>;
   onOpenFirestoreRulesModal?: () => void;
   firestorePermissionError?: boolean;
   onRetryFirestoreSync?: () => void;
@@ -3742,6 +3899,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   setWarningDaysGCP,
   warningDaysGKD,
   setWarningDaysGKD,
+  warningDaysGKX,
+  setWarningDaysGKX,
   warningDaysBD,
   setWarningDaysBD,
   telegramBotToken,
@@ -3977,6 +4136,12 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 active={channels.expiryGKD} 
                 onToggle={() => toggleChannel('expiryGKD')} 
                 desc="Nhắc nhở lịch kiểm định an toàn bức xạ định kỳ"
+              />
+              <NotificationToggle 
+                label="Thời gian kiểm xạ (GKX)" 
+                active={channels.expiryGKX} 
+                onToggle={() => toggleChannel('expiryGKX')} 
+                desc="Nhắc nhở lịch đo kiểm tra an toàn bức xạ và liều xạ định kỳ"
               />
               <NotificationToggle 
                 label="Lịch trình bảo trì (BD)" 
@@ -4275,7 +4440,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
           <p className="text-xs text-slate-500 italic leading-relaxed font-sans">
             Hệ thống sẽ chuyển trạng thái các thiết bị sang màu cam (Cận hạn) và gửi cảnh báo trước khi đến ngày hết hạn thực tế theo cấu hình dưới đây.
           </p>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
             <div className="space-y-2">
               <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block font-sans">
                 Giấy phép (GCP)
@@ -4319,6 +4484,29 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
               </div>
               <p className="text-[11px] text-slate-400 leading-normal">
                 Thời gian chuẩn bị kiểm định an toàn thiết bị.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block font-sans">
+                Kiểm xạ (GKX)
+              </label>
+              <div className="relative flex items-center">
+                <input 
+                  type="number"
+                  min="1"
+                  max="365"
+                  className="w-full rounded-2xl bg-slate-50 border border-slate-200 pl-4 pr-12 py-3 text-sm font-semibold outline-none focus:ring-2 focus:ring-blue-500 transition-all font-mono text-slate-700"
+                  value={warningDaysGKX}
+                  onChange={(e) => {
+                    const parsed = parseInt(e.target.value);
+                    if (!isNaN(parsed) && parsed > 0) setWarningDaysGKX(parsed);
+                  }}
+                />
+                <span className="absolute right-4 text-xs font-bold text-slate-400">ngày</span>
+              </div>
+              <p className="text-[11px] text-slate-400 leading-normal">
+                Thời gian chuẩn bị kiểm tra an toàn bức xạ phòng máy.
               </p>
             </div>
 

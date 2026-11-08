@@ -38,9 +38,10 @@ interface DeviceStatsChartsProps {
   devices: Device[];
   warningDaysGCP?: number;
   warningDaysGKD?: number;
+  warningDaysGKX?: number;
   warningDaysBD?: number;
   onSelectDevice?: (device: Device) => void;
-  onConfirmDone?: (id: string, type: 'GCP' | 'GKD' | 'BD') => void;
+  onConfirmDone?: (id: string, type: 'GCP' | 'GKD' | 'GKX' | 'BD') => void;
 }
 
 interface ProcessedDeviceInfo {
@@ -52,6 +53,7 @@ interface ProcessedDeviceInfo {
   manager: string;
   gkdDays: number | null;
   gcpDays: number | null;
+  gkxDays: number | null;
   minInspectionDays: number | null;
   gkdStatus: 'expired' | 'warning' | 'ok' | 'none';
   maintenanceDays: number | null;
@@ -73,6 +75,7 @@ export const DeviceStatsCharts: React.FC<DeviceStatsChartsProps> = ({
   devices,
   warningDaysGCP = 75,
   warningDaysGKD = 30,
+  warningDaysGKX = 30,
   warningDaysBD = 30,
   onSelectDevice,
   onConfirmDone
@@ -86,15 +89,10 @@ export const DeviceStatsCharts: React.FC<DeviceStatsChartsProps> = ({
     return devices.map(d => {
       const gkdDays = getDaysRemaining(d.expiryGKD);
       const gcpDays = getDaysRemaining(d.expiryGCP);
+      const gkxDays = getDaysRemaining(d.expiryGKX);
 
-      let minInspectionDays: number | null = null;
-      if (gkdDays !== null && gcpDays !== null) {
-        minInspectionDays = Math.min(gkdDays, gcpDays);
-      } else if (gkdDays !== null) {
-        minInspectionDays = gkdDays;
-      } else if (gcpDays !== null) {
-        minInspectionDays = gcpDays;
-      }
+      const validDays = [gkdDays, gcpDays, gkxDays].filter((x): x is number => x !== null);
+      const minInspectionDays = validDays.length > 0 ? Math.min(...validDays) : null;
 
       let gkdStatus: 'expired' | 'warning' | 'ok' | 'none' = 'none';
       if (minInspectionDays !== null) {
@@ -149,6 +147,7 @@ export const DeviceStatsCharts: React.FC<DeviceStatsChartsProps> = ({
         manager: d.manager || 'Chưa gán',
         gkdDays,
         gcpDays,
+        gkxDays,
         minInspectionDays,
         gkdStatus,
         maintenanceDays,
@@ -157,7 +156,7 @@ export const DeviceStatsCharts: React.FC<DeviceStatsChartsProps> = ({
         urgentScore
       };
     });
-  }, [devices, warningDaysGKD, warningDaysGCP, warningDaysBD]);
+  }, [devices, warningDaysGKD, warningDaysGCP, warningDaysGKX, warningDaysBD]);
 
   // 2. High-level Summary Statistics
   const summaryStats = useMemo(() => {
@@ -411,34 +410,43 @@ export const DeviceStatsCharts: React.FC<DeviceStatsChartsProps> = ({
 
       {/* Main Body: Scrollable Content */}
       <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
-        {/* KPI Cards Row */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="bg-slate-50/70 border border-slate-200/80 rounded-2xl p-4 flex items-center justify-between shadow-xs">
-            <div>
-              <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Tổng số máy theo dõi</div>
-              <div className="text-2xl font-black text-slate-800 mt-1">{summaryStats.total}</div>
-              <div className="text-[11px] text-slate-500 font-medium mt-0.5">Phòng thiết bị X-Quang</div>
+        {/* Primary 4 Status Cards - Preserved specifically for the Biểu đồ thống kê tab */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
+            <div className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-1">Tổng thiết bị</div>
+            <div className="text-3xl font-extrabold tracking-tight text-slate-900">
+              {String(summaryStats.total).padStart(2, '0')}
             </div>
-            <div className="w-12 h-12 bg-white rounded-2xl border border-slate-200/60 flex items-center justify-center text-slate-600 shadow-xs">
-              <Layers size={22} />
-            </div>
+            <div className="text-[11px] text-slate-400 font-medium mt-1">Phòng máy X-Quang</div>
           </div>
 
-          <div className="bg-rose-50/50 border border-rose-100 rounded-2xl p-4 flex items-center justify-between shadow-xs">
-            <div>
-              <div className="text-[11px] font-bold text-rose-500 uppercase tracking-wider">Cần kiểm định khẩn</div>
-              <div className="text-2xl font-black text-rose-600 mt-1">
-                {summaryStats.gkdExpired + summaryStats.gkdWarning}
-              </div>
-              <div className="text-[11px] text-rose-600/80 font-medium mt-0.5">
-                {summaryStats.gkdExpired} quá hạn • {summaryStats.gkdWarning} cận hạn
-              </div>
+          <div className="bg-white p-5 rounded-2xl border border-red-200 shadow-xs ring-1 ring-red-100 bg-red-50/20">
+            <div className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-1">Quá hạn kiểm định</div>
+            <div className="text-3xl font-extrabold tracking-tight text-red-600">
+              {String(summaryStats.gkdExpired).padStart(2, '0')}
             </div>
-            <div className="w-12 h-12 bg-white rounded-2xl border border-rose-100 flex items-center justify-center text-rose-600 shadow-xs">
-              <ShieldAlert size={22} />
-            </div>
+            <div className="text-[11px] text-red-600/80 font-medium mt-1">Cần lập lịch kiểm định ngay</div>
           </div>
 
+          <div className="bg-white p-5 rounded-2xl border border-orange-200 shadow-xs ring-1 ring-orange-100 bg-orange-50/20">
+            <div className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-1">Sắp cận hạn</div>
+            <div className="text-3xl font-extrabold tracking-tight text-orange-600">
+              {String(summaryStats.gkdWarning).padStart(2, '0')}
+            </div>
+            <div className="text-[11px] text-orange-600/80 font-medium mt-1">Đến hạn trong {warningDaysGKD} ngày</div>
+          </div>
+
+          <div className="bg-white p-5 rounded-2xl border border-emerald-200 shadow-xs ring-1 ring-emerald-100 bg-emerald-50/20">
+            <div className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-1">Vận hành tốt</div>
+            <div className="text-3xl font-extrabold tracking-tight text-green-600">
+              {String(summaryStats.gkdOk).padStart(2, '0')}
+            </div>
+            <div className="text-[11px] text-emerald-600/80 font-medium mt-1">Hồ sơ & kiểm định hợp lệ</div>
+          </div>
+        </div>
+
+        {/* Secondary KPI Row */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="bg-amber-50/50 border border-amber-100 rounded-2xl p-4 flex items-center justify-between shadow-xs">
             <div>
               <div className="text-[11px] font-bold text-amber-600 uppercase tracking-wider">Cần bảo dưỡng kỹ thuật</div>

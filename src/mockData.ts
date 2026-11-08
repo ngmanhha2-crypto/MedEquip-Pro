@@ -11,6 +11,13 @@ export const MOCK_DEVICES: Device[] = [
     yearOfProduction: 2022,
     expiryGCP: '2026-12-31',
     expiryGKD: '2026-05-20',
+    expiryGKX: '2026-11-20',
+    gcpIssueDate: '2025-12-31',
+    gcpPeriod: 12,
+    gkdIssueDate: '2025-05-20',
+    gkdPeriod: 12,
+    gkxIssueDate: '2025-11-20',
+    gkxPeriod: 12,
     lastMaintenance: '2025-12-01',
     maintenancePeriod: 6,
     notes: 'Thiết bị hoạt động ổn định, chú ý định kỳ kiểm tra dòng dò bức xạ và tấm cảm nhận kỹ thuật số định kỳ.',
@@ -39,6 +46,13 @@ export const MOCK_DEVICES: Device[] = [
     yearOfProduction: 2021,
     expiryGCP: '2026-05-25',
     expiryGKD: '2026-04-10',
+    expiryGKX: '2026-06-15',
+    gcpIssueDate: '2025-05-25',
+    gcpPeriod: 12,
+    gkdIssueDate: '2025-04-10',
+    gkdPeriod: 12,
+    gkxIssueDate: '2025-06-15',
+    gkxPeriod: 12,
     lastMaintenance: '2026-02-15',
     maintenancePeriod: 3,
     notes: 'Phòng máy lạnh cần duy trì nhiệt độ 20-22 độ C ổn định để tránh lỗi quá nhiệt đầu thu CT. Định kỳ hút bụi các khe tản nhiệt.',
@@ -67,6 +81,7 @@ export const MOCK_DEVICES: Device[] = [
     yearOfProduction: 2023,
     expiryGCP: '2027-01-01',
     expiryGKD: '2026-06-10',
+    expiryGKX: '',
     lastMaintenance: '2026-01-10',
     maintenancePeriod: 12,
     manager: 'Lê Hoàng Nam'
@@ -81,6 +96,7 @@ export const MOCK_DEVICES: Device[] = [
     yearOfProduction: 2020,
     expiryGCP: '2025-05-01', // Expired
     expiryGKD: '2026-05-05', // Expiring soon
+    expiryGKX: '',
     lastMaintenance: '2025-11-20',
     maintenancePeriod: 6,
     manager: 'Trần Thị Mai'
@@ -95,6 +111,11 @@ export const MOCK_DEVICES: Device[] = [
     yearOfProduction: 2019,
     expiryGCP: '', // Invalid date test
     expiryGKD: '2026-08-15',
+    expiryGKX: '2026-08-20',
+    gkdIssueDate: '2025-08-15',
+    gkdPeriod: 12,
+    gkxIssueDate: '2025-08-20',
+    gkxPeriod: 12,
     lastMaintenance: '2025-08-15',
     maintenancePeriod: 12,
     manager: 'Nguyễn Mạnh Hà'

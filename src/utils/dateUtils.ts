@@ -16,9 +16,9 @@ export const getStatusColor = (days: number | null, warningDays: number = 30) =>
 };
 
 export const formatDisplayDate = (dateStr: string) => {
-  if (!dateStr || dateStr.trim() === '') return 'Chưa cập nhật dữ liệu';
+  if (!dateStr || dateStr.trim() === '') return 'Chưa cập nhật';
   const date = parseISO(dateStr);
-  if (!isValid(date)) return 'Định dạng ngày không hợp lệ';
+  if (!isValid(date)) return 'Không hợp lệ';
   return format(date, 'dd/MM/yyyy');
 };
 

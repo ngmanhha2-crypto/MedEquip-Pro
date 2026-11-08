@@ -27,10 +27,13 @@ export interface Device {
   yearOfProduction: number;
   expiryGCP: string; // Giấy phép (Ngày hết hạn)
   expiryGKD: string; // Kiểm định (Ngày hết hạn)
+  expiryGKX?: string; // Kiểm xạ (Ngày hết hạn)
   gcpIssueDate?: string; // Ngày cấp / gia hạn giấy phép gần nhất
   gcpPeriod?: number; // Thời hạn giấy phép (tháng)
   gkdIssueDate?: string; // Ngày kiểm định gần nhất
   gkdPeriod?: number; // Thời hạn kiểm định (tháng)
+  gkxIssueDate?: string; // Ngày kiểm xạ gần nhất
+  gkxPeriod?: number; // Thời hạn kiểm xạ (tháng)
   lastMaintenance: string;
   maintenancePeriod: number; // Months
   notes?: string;
@@ -43,7 +46,7 @@ export interface MaintenanceLog {
   id: string;
   deviceId: string;
   date: string;
-  type: 'GCP' | 'GKD' | 'BD';
+  type: 'GCP' | 'GKD' | 'GKX' | 'BD';
   note: string;
 }
 

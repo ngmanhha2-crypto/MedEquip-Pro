@@ -1,1 +1,11 @@
 @import "tailwindcss";
+
+/* Ẩn Vercel Toolbar & Feedback widget nếu được triển khai trên Vercel */
+vercel-live-feedback,
+vercel-toolbar,
+#vercel-toolbar,
+[data-vercel-toolbar] {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
