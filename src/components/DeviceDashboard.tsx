@@ -46,7 +46,11 @@ import {
   BarChart3,
   TrendingUp,
   Activity,
-  Wrench
+  Radio,
+  Wrench,
+  FileCheck,
+  CalendarDays,
+  CalendarClock
 } from 'lucide-react';
 import { DeviceStatsCharts } from './DeviceStatsCharts';
 import { MOCK_DEVICES } from '../mockData';
@@ -95,7 +99,7 @@ import {
 
 
 const DeviceDashboard: React.FC = () => {
-  const [devices, setDevices] = useState<Device[]>(MOCK_DEVICES);
+  const [devices, setDevices] = useState<Device[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [isSearchFocused, setIsSearchFocused] = useState(false);
 
@@ -120,6 +124,7 @@ const DeviceDashboard: React.FC = () => {
   const [selectedHistoryDevice, setSelectedHistoryDevice] = useState<Device | null>(null);
   const [selectedNoteDevice, setSelectedNoteDevice] = useState<Device | null>(null);
   const [activeTab, setActiveTab] = useState<'inventory' | 'charts' | 'maintenance' | 'legal' | 'settings'>('inventory');
+  const [scheduleSubTab, setScheduleSubTab] = useState<'all' | 'gcp' | 'gkd' | 'gkx' | 'bd'>('gcp');
 
   // Custom warning thresholds configuration days (Giấy phép GCP, Kiểm định GKĐ, Kiểm xạ GKX, Bảo dưỡng BD)
   const [warningDaysGCP, setWarningDaysGCP] = useState<number>(() => {
@@ -138,6 +143,43 @@ const DeviceDashboard: React.FC = () => {
     const val = localStorage.getItem('medequip_warning_days_bd');
     return val ? parseInt(val) : 30;
   });
+
+  // Calculate urgent items count across the 4 schedule categories
+  const scheduleCounts = useMemo(() => {
+    let gcpUrgent = 0;
+    let gkdUrgent = 0;
+    let gkxUrgent = 0;
+    let bdUrgent = 0;
+
+    devices.forEach(d => {
+      const daysGCP = getDaysRemaining(d.expiryGCP);
+      if (daysGCP !== null && daysGCP <= warningDaysGCP) gcpUrgent++;
+
+      const daysGKD = getDaysRemaining(d.expiryGKD);
+      if (daysGKD !== null && daysGKD <= warningDaysGKD) gkdUrgent++;
+
+      const daysGKX = getDaysRemaining(d.expiryGKX);
+      if (daysGKX !== null && daysGKX <= warningDaysGKX) gkxUrgent++;
+
+      if (d.lastMaintenance && d.maintenancePeriod) {
+        try {
+          const nextBD = addMonths(parseISO(d.lastMaintenance), d.maintenancePeriod);
+          const daysBD = differenceInDays(nextBD, new Date());
+          if (daysBD <= warningDaysBD) bdUrgent++;
+        } catch {
+          // ignore date parse issues
+        }
+      }
+    });
+
+    return {
+      gcp: gcpUrgent,
+      gkd: gkdUrgent,
+      gkx: gkxUrgent,
+      bd: bdUrgent,
+      total: gcpUrgent + gkdUrgent + gkxUrgent + bdUrgent
+    };
+  }, [devices, warningDaysGCP, warningDaysGKD, warningDaysGKX, warningDaysBD]);
 
   // Lifted Email Settings States
   const [recipientEmail, setRecipientEmail] = useState<string>(() => {
@@ -257,17 +299,10 @@ const DeviceDashboard: React.FC = () => {
     } catch {}
     
     const initialDocs: Record<string, LegalDoc[]> = {};
-    MOCK_DEVICES.forEach(d => {
-      initialDocs[d.id] = [
-        { id: `${d.id}-gcp`, name: `GiayPhep_GCP_${d.serialNumber}.pdf`, type: 'PDF', uploadDate: '2024-01-10', size: '2.5 MB' },
-        { id: `${d.id}-gkd`, name: `ChungNhan_GKD_${d.serialNumber}.pdf`, type: 'PDF', uploadDate: '2023-11-15', size: '1.8 MB' },
-        { id: `${d.id}-contract`, name: `HopDong_MuaBan_${d.serialNumber}.pdf`, type: 'PDF', uploadDate: '2023-06-01', size: '4.2 MB' }
-      ];
-    });
     initialDocs['shared-legal-docs-folder'] = [
       { id: 'shared-1', name: 'NghiDinh_98_2021_ND-CP_QuanLyTrangThietBiYTe.pdf', type: 'PDF', uploadDate: '2021-11-08', size: '3.4 MB' },
       { id: 'shared-2', name: 'QuyetDinh_1522_QuyCongBoGiaThietBi.pdf', type: 'PDF', uploadDate: '2023-04-12', size: '1.1 MB' },
-      { id: 'shared-3', name: 'ChungChi_KyThuatVien_NguyenVanA.pdf', type: 'PDF', uploadDate: '2024-02-15', size: '1.8 MB' },
+      { id: 'shared-3', name: 'ChungChi_KyThuatVien_AnToanBucXa.pdf', type: 'PDF', uploadDate: '2024-02-15', size: '1.8 MB' },
       { id: 'shared-4', name: 'NghiDinh_07_2023_SuaDoiNghiDinh98.pdf', type: 'PDF', uploadDate: '2023-03-03', size: '2.0 MB' },
     ];
     return initialDocs;
@@ -792,87 +827,18 @@ const DeviceDashboard: React.FC = () => {
             if (active) {
               setActivityLogs(firestoreLogs || []);
             }
-          } else if (isAlreadySeeded) {
-            // User intentionally cleared the devices list. Keep it empty.
+          } else {
+            // Firestore is empty: start with pristine clean state for production
             setDevices([]);
             const firestoreLogs = await fetchActivityLogsFromFirestore(currentUser.uid);
             if (active) {
               setActivityLogs(firestoreLogs || []);
             }
-          } else {
-            // Lấy chính danh sách thiết bị đang hiển thị trong state hiện tại (nếu có)
-            // Giúp giữ lại thông tin người quản lý, tên, số serial mà bạn đã chỉnh sửa hoặc thêm mới trước khi đồng bộ!
-            const devicesToSeed = (devices && devices.length > 0) ? devices : MOCK_DEVICES;
-            const userPrefix = currentUser.uid.slice(0, 8);
-            const seedDevices = devicesToSeed.map((d, idx) => {
-              const scopedId = d.id && d.id.includes(userPrefix) ? d.id : `${userPrefix}_${d.id || idx + 1}`;
-              return {
-                ...d,
-                id: scopedId,
-                userId: currentUser.uid
-              };
-            });
-            
-            for (const d of seedDevices) {
-              try {
-                await saveDeviceToFirestore(currentUser.uid, d);
-              } catch (err) {
-                console.warn('Error saving seed device to Firestore:', err);
-              }
-            }
-
-            const initialLogsSeed: ActivityLog[] = [
-              {
-                id: `${userPrefix}_log-1`,
-                deviceId: seedDevices[0]?.id || `${userPrefix}_1`,
-                date: '2025-12-01',
-                user: 'Nguyễn Mạnh Hà',
-                type: 'CONFIRM',
-                categoryLabel: 'Bảo trì',
-                description: 'Hoàn thành bảo dưỡng định kỳ nâng cao.',
-                notes: 'Hãng Siemens thực hiện, vệ sinh bóng phát tia X và cân chỉnh liều lượng phát xạ.'
-              },
-              {
-                id: `${userPrefix}_log-2`,
-                deviceId: seedDevices[0]?.id || `${userPrefix}_1`,
-                date: '2025-05-20',
-                user: 'Admin',
-                type: 'CONFIRM',
-                categoryLabel: 'Kiểm định',
-                description: 'Kiểm định an toàn bức xạ phòng máy DR (GKĐ).',
-                notes: 'Thực hiện bởi Trung tâm Kiểm định thiết bị Bức xạ.'
-              },
-              {
-                id: `${userPrefix}_log-3`,
-                deviceId: seedDevices[0]?.id || `${userPrefix}_1`,
-                date: '2024-01-20',
-                user: 'Hệ thống',
-                type: 'CREATE',
-                categoryLabel: 'Nhập máy',
-                description: 'Khởi tạo thông tin hệ thống máy X-quang DR.'
-              }
-            ].map(log => ({
-              ...log,
-              userId: currentUser.uid
-            } as any as ActivityLog));
-
-            for (const log of initialLogsSeed) {
-              try {
-                await saveActivityLogToFirestore(currentUser.uid, log);
-              } catch (err) {
-                console.warn('Error saving seed log to Firestore:', err);
-              }
-            }
-
-            // Explicitly save settings flag that we migrated/seeded and won't do it again
-            await saveSettingsToFirestore(currentUser.uid, {
-              ...firestoreSettings,
-              hasSeeded: true
-            });
-
-            if (active) {
-              setDevices(seedDevices);
-              setActivityLogs(initialLogsSeed);
+            if (!isAlreadySeeded) {
+              await saveSettingsToFirestore(currentUser.uid, {
+                ...firestoreSettings,
+                hasSeeded: true
+              });
             }
           }
         } catch (err: any) {
@@ -882,45 +848,14 @@ const DeviceDashboard: React.FC = () => {
             if (errStr.includes('permission-denied') || errStr.includes('Missing or insufficient permissions')) {
               setFirestorePermissionError(true);
             }
-            setDevices(prev => (prev && prev.length > 0 ? prev : MOCK_DEVICES));
+            setDevices(prev => (prev || []));
           }
         } finally {
           if (active) setLoadingData(false);
         }
       } else {
-        setDevices(MOCK_DEVICES);
-        setActivityLogs([
-          {
-            id: 'log-1',
-            deviceId: '1',
-            date: '2025-12-01',
-            user: 'Nguyễn Mạnh Hà',
-            type: 'CONFIRM',
-            categoryLabel: 'Bảo trì',
-            description: 'Hoàn thành bảo dưỡng định kỳ nâng cao.',
-            notes: 'Hãng Siemens thực hiện, vệ sinh bóng phát tia X và cân chỉnh liều lượng phát xạ.'
-          },
-          {
-            id: 'log-2',
-            deviceId: '1',
-            date: '2025-05-20',
-            user: 'Admin',
-            type: 'CONFIRM',
-            categoryLabel: 'Kiểm định',
-            description: 'Kiểm định an toàn bức xạ phòng máy DR (GKĐ).',
-            notes: 'Thực hiện bởi Trung tâm Kiểm định thiết bị Bức xạ.'
-          },
-          {
-            id: 'log-3',
-            deviceId: '1',
-            date: '2024-01-20',
-            user: 'Hệ thống',
-            type: 'CREATE',
-            categoryLabel: 'Nhập máy',
-            description: 'Khởi tạo hồ sơ thiết bị ban đầu trên hệ thống.',
-            notes: ''
-          }
-        ]);
+        setDevices([]);
+        setActivityLogs([]);
       }
     };
 
@@ -1064,21 +999,146 @@ const DeviceDashboard: React.FC = () => {
     });
   }, [devices, searchTerm, filterStatus, warningDaysGKD, warningDaysGCP, warningDaysGKX]);
 
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+
   const handleExportExcel = () => {
-    const ws = XLSX.utils.json_to_sheet(devices.map(d => ({
+    const exportData = devices.length > 0 ? devices.map(d => ({
       'Tên thiết bị': d.name,
       'Model': d.model,
       'Số Serial': d.serialNumber,
-      'Hãng/Xuất xứ': `${d.manufacturer} / ${d.origin}`,
-      'Năm SX': d.yearOfProduction,
+      'Hãng sản xuất': d.manufacturer || '',
+      'Xuất xứ': d.origin || '',
+      'Năm SX': d.yearOfProduction || '',
       'Hạn GCP': formatDisplayDate(d.expiryGCP),
       'Hạn GKĐ': formatDisplayDate(d.expiryGKD),
       'Hạn Kiểm xạ (GKX)': formatDisplayDate(d.expiryGKX),
-      'Bảo dưỡng lần cuối': formatDisplayDate(d.lastMaintenance)
-    })));
+      'Bảo dưỡng lần cuối': formatDisplayDate(d.lastMaintenance),
+      'Chu kỳ bảo trì (tháng)': d.maintenancePeriod || 6,
+      'Người quản lý': d.manager || '',
+      'Khoa/Phòng': d.department || 'Phòng X-Quang'
+    })) : [
+      {
+        'Tên thiết bị': 'Máy X-quang kỹ thuật số (Mẫu)',
+        'Model': 'Titan 2000',
+        'Số Serial': 'SN-DR-2024-001',
+        'Hãng sản xuất': 'Siemens Healthineers',
+        'Xuất xứ': 'Đức',
+        'Năm SX': 2024,
+        'Hạn GCP': '2026-12-31',
+        'Hạn GKĐ': '2026-06-30',
+        'Hạn Kiểm xạ (GKX)': '2026-06-30',
+        'Bảo dưỡng lần cuối': '2025-12-01',
+        'Chu kỳ bảo trì (tháng)': 6,
+        'Người quản lý': 'Nguyễn Mạnh Hà',
+        'Khoa/Phòng': 'Phòng X-Quang'
+      }
+    ];
+
+    const ws = XLSX.utils.json_to_sheet(exportData);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Devices");
-    XLSX.writeFile(wb, "Danh_muc_thiet_bi_yte.xlsx");
+    XLSX.utils.book_append_sheet(wb, ws, "Danh_muc_thiet_bi");
+    XLSX.writeFile(wb, devices.length > 0 ? "Danh_muc_thiet_bi_yte.xlsx" : "Mau_nhap_thiet_bi_yte.xlsx");
+  };
+
+  const handleImportExcel = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const bstr = evt.target?.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        const data: any[] = XLSX.utils.sheet_to_json(ws);
+
+        if (!data || data.length === 0) {
+          alert('Tệp Excel không có dòng dữ liệu hợp lệ.');
+          return;
+        }
+
+        const newDevices: Device[] = data.map((row, idx) => {
+          const userPrefix = auth.currentUser ? auth.currentUser.uid.slice(0, 8) : 'dev';
+          const newId = `${userPrefix}_import_${Date.now()}_${idx + 1}`;
+          
+          return {
+            id: newId,
+            name: String(row['Tên thiết bị'] || row['Tên'] || row['name'] || `Thiết bị ${idx + 1}`).trim(),
+            model: String(row['Model'] || row['model'] || '').trim(),
+            serialNumber: String(row['Số Serial'] || row['Serial'] || row['serialNumber'] || `SN-${Date.now()}-${idx + 1}`).trim(),
+            manufacturer: String(row['Hãng sản xuất'] || row['Hãng'] || row['Hãng/Xuất xứ'] || row['manufacturer'] || '').trim(),
+            origin: String(row['Xuất xứ'] || row['origin'] || '').trim(),
+            yearOfProduction: Number(row['Năm SX'] || row['yearOfProduction'] || new Date().getFullYear()),
+            expiryGCP: String(row['Hạn GCP'] || row['expiryGCP'] || '').trim(),
+            expiryGKD: String(row['Hạn GKĐ'] || row['expiryGKD'] || '').trim(),
+            expiryGKX: String(row['Hạn Kiểm xạ (GKX)'] || row['Hạn GKX'] || row['expiryGKX'] || '').trim(),
+            lastMaintenance: String(row['Bảo dưỡng lần cuối'] || row['lastMaintenance'] || '').trim(),
+            maintenancePeriod: Number(row['Chu kỳ bảo trì (tháng)'] || row['Chu kỳ bảo trì'] || row['maintenancePeriod'] || 6),
+            manager: String(row['Người quản lý'] || row['manager'] || '').trim(),
+            department: String(row['Khoa/Phòng'] || row['Phòng'] || row['department'] || 'Phòng X-Quang').trim()
+          };
+        });
+
+        if (auth.currentUser) {
+          for (const d of newDevices) {
+            try {
+              await saveDeviceToFirestore(auth.currentUser.uid, d);
+            } catch (err) {
+              console.warn('Lỗi lưu thiết bị nhập từ Excel vào Firestore:', err);
+            }
+          }
+        }
+
+        setDevices(prev => [...prev, ...newDevices]);
+        alert(`Đã nhập thành công ${newDevices.length} thiết bị từ file Excel vào hệ thống!`);
+      } catch (err) {
+        console.error('Lỗi khi đọc file Excel:', err);
+        alert('Có lỗi xảy ra khi đọc tệp Excel. Vui lòng kiểm tra lại định dạng file.');
+      } finally {
+        if (e.target) e.target.value = '';
+      }
+    };
+    reader.readAsBinaryString(file);
+  };
+
+  const handleClearAllData = async () => {
+    askConfirmation(
+      "Xác nhận xóa toàn bộ dữ liệu mẫu trong hệ thống?",
+      "Thao tác này sẽ xóa vĩnh viễn toàn bộ thiết bị và lịch sử hoạt động khỏi cơ sở dữ liệu để đưa hệ thống về trạng thái sẵn sàng triển khai (sạch 100%). Bạn có chắc chắn muốn xóa?",
+      async () => {
+        try {
+          if (auth.currentUser) {
+            const currentDevices = [...devices];
+            for (const d of currentDevices) {
+              try {
+                await deleteDeviceFromFirestore(auth.currentUser.uid, d.id);
+              } catch (e) {
+                console.warn('Lỗi khi xóa thiết bị khỏi Firestore:', e);
+              }
+            }
+            const currentLogs = [...activityLogs];
+            for (const log of currentLogs) {
+              try {
+                await deleteActivityLogFromFirestore(auth.currentUser.uid, log.id);
+              } catch (e) {
+                console.warn('Lỗi khi xóa nhật ký khỏi Firestore:', e);
+              }
+            }
+          }
+          setDevices([]);
+          setActivityLogs([]);
+          localStorage.removeItem('medequip_saved_mock_docs');
+          setMockDocs({});
+          alert('Đã xóa sạch toàn bộ dữ liệu mẫu! Hệ thống đang ở trạng thái sẵn sàng triển khai.');
+        } catch (error) {
+          console.error('Lỗi khi xóa dữ liệu:', error);
+          alert('Có lỗi xảy ra khi xóa dữ liệu.');
+        }
+      },
+      'danger',
+      'Xóa sạch dữ liệu mẫu'
+    );
   };
 
   const handleConfirmDone = async (
@@ -2022,16 +2082,37 @@ const DeviceDashboard: React.FC = () => {
             </button>
           ) : null}
 
+          {/* Hidden file input for Excel Import */}
+          <input 
+            type="file" 
+            ref={fileInputRef} 
+            onChange={handleImportExcel} 
+            accept=".xlsx, .xls, .csv" 
+            className="hidden" 
+          />
+
           <button 
-            onClick={handleExportExcel}
-            className="flex items-center gap-1.5 px-3 py-2 border border-slate-200 rounded-xl text-xs sm:text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer bg-white shadow-xs"
-            title="Xuất bảng thiết bị ra file Excel"
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="hidden md:flex items-center gap-1.5 px-3 py-2 border border-slate-200 rounded-xl text-xs sm:text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer bg-white shadow-xs"
+            title="Nhập danh sách thiết bị từ file Excel (.xlsx)"
           >
-            <Download size={15} />
-            <span className="hidden sm:inline">Xuất Excel</span>
+            <Upload size={15} />
+            <span>Nhập Excel</span>
           </button>
 
           <button 
+            type="button"
+            onClick={handleExportExcel}
+            className="flex items-center gap-1.5 px-3 py-2 border border-slate-200 rounded-xl text-xs sm:text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer bg-white shadow-xs"
+            title={devices.length > 0 ? "Xuất bảng thiết bị ra file Excel" : "Tải file mẫu Excel chuẩn để nhập dữ liệu"}
+          >
+            <Download size={15} />
+            <span className="hidden sm:inline">{devices.length > 0 ? "Xuất Excel" : "Mẫu Excel"}</span>
+          </button>
+
+          <button 
+            type="button"
             onClick={() => {
               setEditingDevice(null);
               setIsModalOpen(true);
@@ -2086,7 +2167,9 @@ const DeviceDashboard: React.FC = () => {
             active={activeTab === 'maintenance'} 
             onClick={() => setActiveTab('maintenance')} 
             icon={<Calendar size={18} />} 
-            label="Lịch bảo trì" 
+            label="Lịch trình" 
+            badge={scheduleCounts.total > 0 ? scheduleCounts.total : undefined}
+            badgeColor="bg-red-100 text-red-600"
           />
           <NavTabButton 
             active={activeTab === 'legal'} 
@@ -2214,12 +2297,54 @@ const DeviceDashboard: React.FC = () => {
                     </tbody>
                   </table>
 
-                  {filteredDevices.length === 0 && (
+                  {devices.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-20 px-4 text-center">
+                      <div className="w-16 h-16 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mb-4 shadow-sm border border-blue-100">
+                        <LayoutDashboard size={32} />
+                      </div>
+                      <h3 className="text-base sm:text-lg font-bold text-slate-800 mb-1">
+                        Hệ thống sẵn sàng triển khai — Chưa có thiết bị
+                      </h3>
+                      <p className="text-xs sm:text-sm text-slate-500 max-w-md mb-6 leading-relaxed">
+                        Toàn bộ dữ liệu mẫu đã được làm sạch. Bạn có thể bắt đầu bằng cách thêm thiết bị thực tế của cơ sở hoặc nhập danh sách hàng loạt từ file Excel.
+                      </p>
+                      <div className="flex flex-wrap items-center justify-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingDevice(null);
+                            setIsModalOpen(true);
+                          }}
+                          className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs sm:text-sm font-bold shadow-md shadow-blue-500/20 transition-all inline-flex items-center gap-2 cursor-pointer"
+                        >
+                          <Plus size={16} />
+                          <span>Thêm thiết bị đầu tiên</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => fileInputRef.current?.click()}
+                          className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs sm:text-sm font-bold transition-all inline-flex items-center gap-2 cursor-pointer border border-slate-200"
+                        >
+                          <Upload size={16} />
+                          <span>Nhập từ file Excel</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleExportExcel}
+                          className="px-4 py-2.5 rounded-xl bg-white hover:bg-slate-50 text-slate-600 text-xs sm:text-sm font-semibold transition-all inline-flex items-center gap-2 cursor-pointer border border-slate-200 shadow-xs"
+                        >
+                          <Download size={16} />
+                          <span>Tải file Excel mẫu</span>
+                        </button>
+                      </div>
+                    </div>
+                  ) : filteredDevices.length === 0 ? (
                     <div className="flex flex-col items-center justify-center p-20 text-slate-400">
                       <Search size={48} className="mb-4 opacity-10" />
-                      <p className="text-sm">Không có dữ liệu phù hợp với bộ lọc</p>
+                      <p className="text-sm font-semibold">Không tìm thấy thiết bị phù hợp với bộ lọc</p>
+                      <p className="text-xs mt-1 text-slate-400">Thử xóa từ khóa tìm kiếm hoặc chọn bộ lọc trạng thái khác.</p>
                     </div>
-                  )}
+                  ) : null}
                 </div>
 
                 {/* Pagination / Footer */}
@@ -2251,11 +2376,21 @@ const DeviceDashboard: React.FC = () => {
               onConfirmDone={handleConfirmDone}
             />
           ) : activeTab === 'maintenance' ? (
-            <MaintenanceSchedule 
+            <ScheduleManagementPanel 
               devices={devices} 
+              currentSubTab={scheduleSubTab}
+              onSubTabChange={setScheduleSubTab}
+              warningDaysGCP={warningDaysGCP}
+              warningDaysGKD={warningDaysGKD}
+              warningDaysGKX={warningDaysGKX}
               warningDaysBD={warningDaysBD} 
               activityLogs={activityLogs}
               onOpenCharts={() => setActiveTab('charts')}
+              onConfirmDone={handleConfirmDone}
+              onEditDevice={(d) => {
+                setEditingDevice(d);
+                setIsModalOpen(true);
+              }}
             />
           ) : activeTab === 'settings' ? (
             <SettingsPanel 
@@ -2300,6 +2435,7 @@ const DeviceDashboard: React.FC = () => {
                 setFirestorePermissionError(false);
                 setSyncCounter(c => c + 1);
               }}
+              onClearAllData={handleClearAllData}
             />
           ) : (
             <LegalDocumentsPanel 
@@ -3680,33 +3816,338 @@ const DeviceRowV2 = ({ device, onConfirm, onDelete, onEdit, onShowHistory, onSho
   );
 };
 
-const MaintenanceSchedule = ({ 
-  devices, 
+interface ScheduleManagementPanelProps {
+  devices: Device[];
+  currentSubTab: 'all' | 'gcp' | 'gkd' | 'gkx' | 'bd';
+  onSubTabChange: (sub: 'all' | 'gcp' | 'gkd' | 'gkx' | 'bd') => void;
+  warningDaysGCP?: number;
+  warningDaysGKD?: number;
+  warningDaysGKX?: number;
+  warningDaysBD?: number;
+  activityLogs?: ActivityLog[];
+  onOpenCharts?: () => void;
+  onConfirmDone?: (id: string, type: 'GCP' | 'GKD' | 'GKX' | 'BD', manualDate?: string, issueDate?: string, period?: number) => void;
+  onEditDevice?: (device: Device) => void;
+}
+
+const ScheduleManagementPanel = ({
+  devices,
+  currentSubTab,
+  onSubTabChange,
+  warningDaysGCP = 75,
+  warningDaysGKD = 30,
+  warningDaysGKX = 30,
   warningDaysBD = 30,
   activityLogs = [],
-  onOpenCharts
-}: { 
-  devices: Device[], 
-  warningDaysBD: number,
-  activityLogs?: ActivityLog[],
-  onOpenCharts?: () => void
-}) => {
+  onOpenCharts,
+  onConfirmDone,
+  onEditDevice
+}: ScheduleManagementPanelProps) => {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'expired' | 'warning' | 'ok'>('all');
   const [expandedDevices, setExpandedDevices] = useState<Record<string, boolean>>({});
 
-  const toggleExpand = (id: string) => {
+  // Quick confirm modal state
+  const [confirmModalData, setConfirmModalData] = useState<{
+    isOpen: boolean;
+    device: Device | null;
+    type: 'GCP' | 'GKD' | 'GKX' | 'BD';
+    title: string;
+    issueDate: string;
+    periodMonths: number;
+    targetExpiryDate: string;
+  }>({
+    isOpen: false,
+    device: null,
+    type: 'GKD',
+    title: '',
+    issueDate: format(new Date(), 'yyyy-MM-dd'),
+    periodMonths: 12,
+    targetExpiryDate: format(addMonths(new Date(), 12), 'yyyy-MM-dd')
+  });
+
+  const toggleExpand = (key: string) => {
     setExpandedDevices(prev => ({
       ...prev,
-      [id]: !prev[id]
+      [key]: !prev[key]
     }));
   };
 
+  const openQuickConfirm = (device: Device, type: 'GCP' | 'GKD' | 'GKX' | 'BD') => {
+    const todayStr = format(new Date(), 'yyyy-MM-dd');
+    let defaultPeriod = 12;
+    let title = '';
+
+    if (type === 'GCP') {
+      defaultPeriod = device.gcpPeriod || 24;
+      title = `Gia hạn Giấy phép sử dụng (GCP) - ${device.name}`;
+    } else if (type === 'GKD') {
+      defaultPeriod = device.gkdPeriod || 12;
+      title = `Xác nhận Kiểm định máy (GKĐ) - ${device.name}`;
+    } else if (type === 'GKX') {
+      defaultPeriod = device.gkxPeriod || 12;
+      title = `Xác nhận Đo kiểm xạ (GKX) - ${device.name}`;
+    } else if (type === 'BD') {
+      defaultPeriod = device.maintenancePeriod || 6;
+      title = `Xác nhận Bảo trì/Bảo dưỡng (BD) - ${device.name}`;
+    }
+
+    const calculatedExpiry = calculateExpiryFromIssue(todayStr, defaultPeriod);
+
+    setConfirmModalData({
+      isOpen: true,
+      device,
+      type,
+      title,
+      issueDate: todayStr,
+      periodMonths: defaultPeriod,
+      targetExpiryDate: calculatedExpiry || todayStr
+    });
+  };
+
+  const handleModalPeriodOrDateChange = (newIssueDate: string, newPeriod: number) => {
+    const calculatedExpiry = calculateExpiryFromIssue(newIssueDate, newPeriod);
+    setConfirmModalData(prev => ({
+      ...prev,
+      issueDate: newIssueDate,
+      periodMonths: newPeriod,
+      targetExpiryDate: calculatedExpiry || prev.targetExpiryDate
+    }));
+  };
+
+  const handleSaveQuickConfirm = () => {
+    if (!confirmModalData.device || !onConfirmDone) return;
+    onConfirmDone(
+      confirmModalData.device.id,
+      confirmModalData.type,
+      confirmModalData.targetExpiryDate,
+      confirmModalData.issueDate,
+      confirmModalData.periodMonths
+    );
+    setConfirmModalData(prev => ({ ...prev, isOpen: false }));
+  };
+
+  // Helper to extract milestone info for a device and type
+  const getMilestoneInfo = (device: Device, type: 'GCP' | 'GKD' | 'GKX' | 'BD') => {
+    if (type === 'GCP') {
+      const days = getDaysRemaining(device.expiryGCP);
+      const isExpired = days !== null && days < 0;
+      const isWarning = days !== null && days >= 0 && days <= warningDaysGCP;
+      const isOk = days !== null && days > warningDaysGCP;
+      return {
+        type: 'GCP' as const,
+        typeName: 'Gia hạn cấp phép (GCP)',
+        shortName: 'Cấp phép GCP',
+        issueDate: device.gcpIssueDate,
+        period: device.gcpPeriod,
+        targetDate: device.expiryGCP,
+        days,
+        warningDays: warningDaysGCP,
+        status: isExpired ? 'expired' : isWarning ? 'warning' : isOk ? 'ok' : 'unset',
+        icon: <FileCheck size={18} className="text-blue-500" />,
+        badgeColor: 'bg-blue-50 text-blue-700 border-blue-200'
+      };
+    }
+    if (type === 'GKD') {
+      const days = getDaysRemaining(device.expiryGKD);
+      const isExpired = days !== null && days < 0;
+      const isWarning = days !== null && days >= 0 && days <= warningDaysGKD;
+      const isOk = days !== null && days > warningDaysGKD;
+      return {
+        type: 'GKD' as const,
+        typeName: 'Kiểm định máy (GKĐ)',
+        shortName: 'Kiểm định GKĐ',
+        issueDate: device.gkdIssueDate,
+        period: device.gkdPeriod,
+        targetDate: device.expiryGKD,
+        days,
+        warningDays: warningDaysGKD,
+        status: isExpired ? 'expired' : isWarning ? 'warning' : isOk ? 'ok' : 'unset',
+        icon: <ShieldCheck size={18} className="text-indigo-500" />,
+        badgeColor: 'bg-indigo-50 text-indigo-700 border-indigo-200'
+      };
+    }
+    if (type === 'GKX') {
+      const days = getDaysRemaining(device.expiryGKX);
+      const isExpired = days !== null && days < 0;
+      const isWarning = days !== null && days >= 0 && days <= warningDaysGKX;
+      const isOk = days !== null && days > warningDaysGKX;
+      return {
+        type: 'GKX' as const,
+        typeName: 'Kiểm xạ máy (GKX)',
+        shortName: 'Kiểm xạ GKX',
+        issueDate: device.gkxIssueDate,
+        period: device.gkxPeriod,
+        targetDate: device.expiryGKX,
+        days,
+        warningDays: warningDaysGKX,
+        status: isExpired ? 'expired' : isWarning ? 'warning' : isOk ? 'ok' : 'unset',
+        icon: <Radio size={18} className="text-amber-500" />,
+        badgeColor: 'bg-amber-50 text-amber-700 border-amber-200'
+      };
+    }
+    // BD
+    let targetDate = '';
+    let days: number | null = null;
+    if (device.lastMaintenance && device.maintenancePeriod) {
+      try {
+        const nextDate = addMonths(parseISO(device.lastMaintenance), device.maintenancePeriod);
+        targetDate = format(nextDate, 'yyyy-MM-dd');
+        days = differenceInDays(nextDate, new Date());
+      } catch {
+        targetDate = '';
+        days = null;
+      }
+    }
+    const isExpired = days !== null && days < 0;
+    const isWarning = days !== null && days >= 0 && days <= warningDaysBD;
+    const isOk = days !== null && days > warningDaysBD;
+    return {
+      type: 'BD' as const,
+      typeName: 'Bảo trì/bảo dưỡng (BD)',
+      shortName: 'Bảo trì BD',
+      issueDate: device.lastMaintenance,
+      period: device.maintenancePeriod,
+      targetDate,
+      days,
+      warningDays: warningDaysBD,
+      status: isExpired ? 'expired' : isWarning ? 'warning' : isOk ? 'ok' : 'unset',
+      icon: <Wrench size={18} className="text-emerald-500" />,
+      badgeColor: 'bg-emerald-50 text-emerald-700 border-emerald-200'
+    };
+  };
+
+  // Compile items list based on currentSubTab
+  const allItems = useMemo(() => {
+    let items: Array<{
+      device: Device;
+      key: string;
+      info: ReturnType<typeof getMilestoneInfo>;
+    }> = [];
+
+    if (currentSubTab === 'gcp') {
+      items = devices.map(d => ({
+        device: d,
+        key: `${d.id}-gcp`,
+        info: getMilestoneInfo(d, 'GCP')
+      }));
+    } else if (currentSubTab === 'gkd') {
+      items = devices.map(d => ({
+        device: d,
+        key: `${d.id}-gkd`,
+        info: getMilestoneInfo(d, 'GKD')
+      }));
+    } else if (currentSubTab === 'gkx') {
+      items = devices.map(d => ({
+        device: d,
+        key: `${d.id}-gkx`,
+        info: getMilestoneInfo(d, 'GKX')
+      }));
+    } else if (currentSubTab === 'bd') {
+      items = devices.map(d => ({
+        device: d,
+        key: `${d.id}-bd`,
+        info: getMilestoneInfo(d, 'BD')
+      }));
+    } else {
+      // 'all': combine all 4 milestones
+      devices.forEach(d => {
+        items.push({ device: d, key: `${d.id}-gcp`, info: getMilestoneInfo(d, 'GCP') });
+        items.push({ device: d, key: `${d.id}-gkd`, info: getMilestoneInfo(d, 'GKD') });
+        items.push({ device: d, key: `${d.id}-gkx`, info: getMilestoneInfo(d, 'GKX') });
+        items.push({ device: d, key: `${d.id}-bd`, info: getMilestoneInfo(d, 'BD') });
+      });
+    }
+
+    // Sort: overdue first (negative days ascending), then warning, then ok, then unset
+    return items.sort((a, b) => {
+      const daysA = a.info.days ?? 999999;
+      const daysB = b.info.days ?? 999999;
+      return daysA - daysB;
+    });
+  }, [devices, currentSubTab, warningDaysGCP, warningDaysGKD, warningDaysGKX, warningDaysBD]);
+
+  // Filter items by search and status filter
+  const filteredItems = useMemo(() => {
+    return allItems.filter(item => {
+      // search
+      if (searchTerm.trim()) {
+        const term = searchTerm.toLowerCase();
+        const matchName = item.device.name.toLowerCase().includes(term);
+        const matchModel = item.device.model.toLowerCase().includes(term);
+        const matchSerial = (item.device.serialNumber || '').toLowerCase().includes(term);
+        const matchDept = (item.device.department || '').toLowerCase().includes(term);
+        const matchManager = (item.device.manager || '').toLowerCase().includes(term);
+        if (!matchName && !matchModel && !matchSerial && !matchDept && !matchManager) {
+          return false;
+        }
+      }
+
+      // status
+      if (statusFilter === 'all') return true;
+      if (statusFilter === 'expired') return item.info.status === 'expired';
+      if (statusFilter === 'warning') return item.info.status === 'warning';
+      if (statusFilter === 'ok') return item.info.status === 'ok';
+      return true;
+    });
+  }, [allItems, searchTerm, statusFilter]);
+
+  // Sub-tab counts
+  const tabStats = useMemo(() => {
+    let expired = 0;
+    let warning = 0;
+    let ok = 0;
+    allItems.forEach(item => {
+      if (item.info.status === 'expired') expired++;
+      else if (item.info.status === 'warning') warning++;
+      else if (item.info.status === 'ok') ok++;
+    });
+    return {
+      total: allItems.length,
+      expired,
+      warning,
+      ok
+    };
+  }, [allItems]);
+
+  // Sub-menu definitions
+  const subMenuTabs: Array<{
+    key: 'gcp' | 'gkd' | 'gkx' | 'bd' | 'all';
+    label: string;
+    subLabel: string;
+    icon: React.ReactNode;
+  }> = [
+    { key: 'gcp', label: 'Lịch gia hạn cấp phép', subLabel: 'GCP', icon: <FileCheck size={16} /> },
+    { key: 'gkd', label: 'Lịch kiểm định máy', subLabel: 'GKĐ', icon: <ShieldCheck size={16} /> },
+    { key: 'gkx', label: 'Lịch kiểm xạ', subLabel: 'GKX', icon: <Radio size={16} /> },
+    { key: 'bd', label: 'Lịch bảo trì/bảo dưỡng', subLabel: 'BD', icon: <Wrench size={16} /> },
+    { key: 'all', label: 'Tất cả lịch trình', subLabel: 'Tổng hợp', icon: <CalendarDays size={16} /> }
+  ];
+
   return (
     <div className="flex-1 bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
-      <div className="p-6 border-b border-slate-100 bg-slate-50/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      {/* 1. Header with title & charts button */}
+      <div className="p-5 sm:p-6 border-b border-slate-100 bg-slate-50/40 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h3 className="text-lg font-bold text-slate-800">Lịch trình bảo trì định kỳ</h3>
-          <p className="text-xs text-slate-500">Danh sách các thiết bị cần bảo trì trong các tháng tới (Nhấn vào thẻ thiết bị để xem dòng thời gian lịch sử)</p>
+          <div className="flex items-center gap-2 mb-1">
+            <span className="w-2.5 h-2.5 rounded-full bg-blue-600"></span>
+            <h3 className="text-lg font-bold text-slate-800">
+              {currentSubTab === 'gcp' && 'Lịch gia hạn cấp phép (GCP)'}
+              {currentSubTab === 'gkd' && 'Lịch kiểm định máy (GKĐ)'}
+              {currentSubTab === 'gkx' && 'Lịch kiểm xạ an toàn bức xạ (GKX)'}
+              {currentSubTab === 'bd' && 'Lịch bảo trì/bảo dưỡng định kỳ (BD)'}
+              {currentSubTab === 'all' && 'Tổng hợp tất cả lịch trình & mốc hạn'}
+            </h3>
+          </div>
+          <p className="text-xs text-slate-500">
+            {currentSubTab === 'gcp' && 'Theo dõi thời hạn và gia hạn Giấy phép sử dụng thiết bị y tế & an toàn bức xạ'}
+            {currentSubTab === 'gkd' && 'Theo dõi chu kỳ và lịch kiểm định an toàn kỹ thuật / an toàn bức xạ định kỳ'}
+            {currentSubTab === 'gkx' && 'Theo dõi định kỳ kiểm xạ an toàn bức xạ phòng máy và thiết bị y tế'}
+            {currentSubTab === 'bd' && 'Theo dõi lịch bảo trì, bảo dưỡng kỹ thuật theo định kỳ hàng tháng/năm'}
+            {currentSubTab === 'all' && 'Toàn bộ các mốc hạn cấp phép, kiểm định, kiểm xạ và bảo trì được xếp theo mức độ khẩn cấp'}
+          </p>
         </div>
+
         {onOpenCharts && (
           <button
             type="button"
@@ -3714,139 +4155,476 @@ const MaintenanceSchedule = ({
             className="px-3.5 py-2 bg-purple-50 hover:bg-purple-100 text-purple-700 font-bold rounded-xl text-xs transition-all border border-purple-200 inline-flex items-center gap-2 cursor-pointer shadow-xs shrink-0 self-start sm:self-auto"
           >
             <BarChart3 size={15} />
-            <span>Xem biểu đồ phân tích Recharts</span>
+            <span>Xem biểu đồ phân tích</span>
           </button>
         )}
       </div>
-      <div className="flex-1 overflow-auto p-6 space-y-4">
-        {devices.map(device => {
-          const hasMaintenance = !!device.lastMaintenance && !isNaN(new Date(device.lastMaintenance).getTime()) && !!device.maintenancePeriod;
-          let daysToMaintenance: number | null = null;
-          let nextDate: Date | null = null;
 
-          if (hasMaintenance) {
-            const lastDate = parseISO(device.lastMaintenance);
-            nextDate = addMonths(lastDate, device.maintenancePeriod);
-            daysToMaintenance = differenceInDays(nextDate, new Date());
-          }
-
-          const isExpanded = !!expandedDevices[device.id];
-
-          const thisLogs = activityLogs
-            .filter(log => log.deviceId === device.id)
-            .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-          
-          return (
-            <div 
-              key={device.id} 
-              className={`flex flex-col rounded-xl border transition-all duration-200 bg-white overflow-hidden ${
-                isExpanded 
-                  ? 'border-blue-200 shadow-md ring-1 ring-blue-100' 
-                  : 'border-slate-100 hover:border-blue-200 hover:shadow-md'
-              }`}
-            >
-              {/* Card Header Trigger */}
-              <div 
-                onClick={() => toggleExpand(device.id)}
-                className="flex items-center justify-between p-4 cursor-pointer select-none"
+      {/* 2. Sub-menu Tabs Bar (Horizontal segmented navigation) */}
+      <div className="bg-slate-100/70 p-2 border-b border-slate-200 overflow-x-auto custom-scrollbar">
+        <div className="flex items-center gap-2 min-w-max">
+          {subMenuTabs.map(tab => {
+            const isActive = currentSubTab === tab.key;
+            return (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => onSubTabChange(tab.key)}
+                className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all cursor-pointer whitespace-nowrap select-none ${
+                  isActive
+                    ? 'bg-white text-blue-600 shadow-sm border border-slate-200/80'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+                }`}
               >
-                <div className="flex items-center gap-4">
-                  <div className={`w-12 h-12 rounded-lg flex items-center justify-center transition-colors ${
-                    daysToMaintenance !== null && daysToMaintenance < 7 ? 'bg-red-50 text-red-600' : 'bg-slate-50 text-slate-400'
-                  }`}>
-                    <Clock size={24} />
+                <span className={isActive ? 'text-blue-600' : 'text-slate-400'}>
+                  {tab.icon}
+                </span>
+                <span>{tab.label}</span>
+                <span className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded-full ${
+                  isActive ? 'bg-blue-100 text-blue-700' : 'bg-slate-200/80 text-slate-500'
+                }`}>
+                  {tab.subLabel}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 3. Stat Overview Cards for Current Sub-tab */}
+      <div className="p-4 sm:p-6 bg-slate-50/20 border-b border-slate-100 grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        <div className="bg-white p-3.5 sm:p-4 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
+          <div>
+            <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-0.5">Tổng mục theo dõi</div>
+            <div className="text-xl sm:text-2xl font-bold text-slate-800">{tabStats.total}</div>
+          </div>
+          <div className="w-10 h-10 rounded-lg bg-slate-100 text-slate-500 flex items-center justify-center">
+            <CalendarClock size={20} />
+          </div>
+        </div>
+
+        <div className="bg-white p-3.5 sm:p-4 rounded-xl border border-red-200 shadow-xs flex items-center justify-between">
+          <div>
+            <div className="text-[11px] font-semibold text-red-600 uppercase tracking-wider mb-0.5">Đã quá hạn</div>
+            <div className="text-xl sm:text-2xl font-bold text-red-600">{tabStats.expired}</div>
+          </div>
+          <div className="w-10 h-10 rounded-lg bg-red-50 text-red-600 flex items-center justify-center">
+            <AlertCircle size={20} />
+          </div>
+        </div>
+
+        <div className="bg-white p-3.5 sm:p-4 rounded-xl border border-orange-200 shadow-xs flex items-center justify-between">
+          <div>
+            <div className="text-[11px] font-semibold text-orange-600 uppercase tracking-wider mb-0.5">Sắp đến hạn / Cận hạn</div>
+            <div className="text-xl sm:text-2xl font-bold text-orange-600">{tabStats.warning}</div>
+          </div>
+          <div className="w-10 h-10 rounded-lg bg-orange-50 text-orange-600 flex items-center justify-center">
+            <Clock size={20} />
+          </div>
+        </div>
+
+        <div className="bg-white p-3.5 sm:p-4 rounded-xl border border-emerald-200 shadow-xs flex items-center justify-between">
+          <div>
+            <div className="text-[11px] font-semibold text-emerald-700 uppercase tracking-wider mb-0.5">Hợp lệ / Đủ chuẩn</div>
+            <div className="text-xl sm:text-2xl font-bold text-emerald-700">{tabStats.ok}</div>
+          </div>
+          <div className="w-10 h-10 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
+            <CheckCircle2 size={20} />
+          </div>
+        </div>
+      </div>
+
+      {/* 4. Search & Status Filter Toolbar */}
+      <div className="px-5 sm:px-6 py-3 border-b border-slate-100 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 bg-white">
+        {/* Search */}
+        <div className="relative flex-1 max-w-md">
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            type="text"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            placeholder="Tìm theo tên máy, model, serial, phòng ban..."
+            className="w-full pl-9 pr-8 py-2 text-xs sm:text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
+          />
+          {searchTerm && (
+            <button
+              onClick={() => setSearchTerm('')}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
+
+        {/* Status Filters */}
+        <div className="flex items-center gap-1.5 overflow-x-auto custom-scrollbar">
+          <button
+            type="button"
+            onClick={() => setStatusFilter('all')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+              statusFilter === 'all'
+                ? 'bg-slate-900 text-white shadow-xs'
+                : 'text-slate-600 bg-slate-100 hover:bg-slate-200'
+            }`}
+          >
+            Tất cả ({allItems.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setStatusFilter('expired')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+              statusFilter === 'expired'
+                ? 'bg-red-600 text-white shadow-xs'
+                : 'text-red-700 bg-red-50 hover:bg-red-100 border border-red-200/60'
+            }`}
+          >
+            Quá hạn ({tabStats.expired})
+          </button>
+          <button
+            type="button"
+            onClick={() => setStatusFilter('warning')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+              statusFilter === 'warning'
+                ? 'bg-orange-500 text-white shadow-xs'
+                : 'text-orange-700 bg-orange-50 hover:bg-orange-100 border border-orange-200/60'
+            }`}
+          >
+            Cận hạn ({tabStats.warning})
+          </button>
+          <button
+            type="button"
+            onClick={() => setStatusFilter('ok')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+              statusFilter === 'ok'
+                ? 'bg-emerald-600 text-white shadow-xs'
+                : 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200/60'
+            }`}
+          >
+            Hợp lệ ({tabStats.ok})
+          </button>
+        </div>
+      </div>
+
+      {/* 5. List of Items */}
+      <div className="flex-1 overflow-auto p-4 sm:p-6 space-y-3.5 bg-slate-50/30">
+        {filteredItems.length === 0 ? (
+          <div className="py-16 text-center text-slate-400">
+            <CalendarClock size={36} className="mx-auto mb-2 opacity-30" />
+            <p className="text-sm font-semibold">Không tìm thấy thiết bị nào phù hợp với bộ lọc</p>
+            <p className="text-xs mt-1 text-slate-400">Thử thay đổi từ khóa tìm kiếm hoặc chọn bộ lọc trạng thái khác.</p>
+          </div>
+        ) : (
+          filteredItems.map(({ device, key, info }) => {
+            const isExpanded = !!expandedDevices[key];
+            const deviceLogs = activityLogs
+              .filter(log => log.deviceId === device.id)
+              .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+            return (
+              <div
+                key={key}
+                className={`flex flex-col rounded-xl border transition-all duration-200 bg-white overflow-hidden ${
+                  isExpanded
+                    ? 'border-blue-300 shadow-md ring-1 ring-blue-100'
+                    : info.status === 'expired'
+                    ? 'border-red-200 hover:border-red-300 hover:shadow-md'
+                    : info.status === 'warning'
+                    ? 'border-orange-200 hover:border-orange-300 hover:shadow-md'
+                    : 'border-slate-200 hover:border-blue-200 hover:shadow-md'
+                }`}
+              >
+                {/* Main Card Row */}
+                <div className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  {/* Left: Icon & Device Info */}
+                  <div className="flex items-start sm:items-center gap-3.5">
+                    <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${
+                      info.status === 'expired'
+                        ? 'bg-red-50 text-red-600'
+                        : info.status === 'warning'
+                        ? 'bg-orange-50 text-orange-600'
+                        : info.status === 'ok'
+                        ? 'bg-emerald-50 text-emerald-600'
+                        : 'bg-slate-100 text-slate-400'
+                    }`}>
+                      {info.icon}
+                    </div>
+
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-bold text-slate-800 text-sm sm:text-base">
+                          {device.name}
+                        </span>
+                        {/* If in 'all' view, display distinct milestone badge */}
+                        {currentSubTab === 'all' && (
+                          <span className={`text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-md border ${info.badgeColor}`}>
+                            {info.shortName}
+                          </span>
+                        )}
+                        {device.department && (
+                          <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
+                            {device.department}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500 font-mono mt-1">
+                        <span>Model: <strong className="text-slate-700">{device.model}</strong></span>
+                        {device.serialNumber && (
+                          <span>SN: <strong className="text-slate-700">{device.serialNumber}</strong></span>
+                        )}
+                        {device.manager && (
+                          <span className="font-sans text-slate-500">QL: {device.manager}</span>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <div className="font-bold text-slate-800">{device.name}</div>
-                    <div className="text-xs text-slate-500 uppercase font-mono tracking-tighter">
-                      Model: {device.model} {device.maintenancePeriod ? `| Chu kỳ: ${device.maintenancePeriod} tháng` : '| Chu kỳ: Chưa thiết lập'}
+
+                  {/* Right: Milestone Deadlines & Action Buttons */}
+                  <div className="flex flex-wrap items-center justify-between md:justify-end gap-3 pt-2 md:pt-0 border-t md:border-t-0 border-slate-100">
+                    {/* Deadline stats */}
+                    <div className="text-left md:text-right">
+                      <div className="text-xs text-slate-500">
+                        Hạn tiếp theo: <strong className="text-slate-800">{info.targetDate ? formatDisplayDate(info.targetDate) : 'Chưa đặt lịch'}</strong>
+                      </div>
+                      <div className="mt-0.5">
+                        {info.days === null ? (
+                          <span className="inline-block text-[11px] font-semibold text-slate-400 italic">
+                            Chưa cập nhật ngày
+                          </span>
+                        ) : info.days < 0 ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded-full border border-red-200">
+                            <AlertCircle size={12} />
+                            Đã quá hạn {Math.abs(info.days)} ngày
+                          </span>
+                        ) : info.days <= info.warningDays ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-orange-600 bg-orange-50 px-2 py-0.5 rounded-full border border-orange-200">
+                            <Clock size={12} />
+                            Cận hạn: còn {info.days} ngày
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                            <CheckCircle2 size={12} />
+                            Hợp lệ: còn {info.days} ngày
+                          </span>
+                        )}
+                      </div>
+                      {info.period ? (
+                        <div className="text-[10px] text-slate-400 mt-0.5">
+                          Chu kỳ: {info.period >= 12 && info.period % 12 === 0 ? `${info.period / 12} năm (${info.period} tháng)` : `${info.period} tháng`}
+                        </div>
+                      ) : null}
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex items-center gap-1.5">
+                      {/* Confirm Done Button */}
+                      {onConfirmDone && (
+                        <button
+                          type="button"
+                          onClick={() => openQuickConfirm(device, info.type)}
+                          className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold rounded-lg text-xs border border-emerald-200 inline-flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
+                          title="Xác nhận hoàn thành hoặc gia hạn kỳ này"
+                        >
+                          <CheckCircle2 size={14} />
+                          <span className="hidden sm:inline">Xác nhận xong</span>
+                        </button>
+                      )}
+
+                      {/* Edit Device Button */}
+                      {onEditDevice && (
+                        <button
+                          type="button"
+                          onClick={() => onEditDevice(device)}
+                          className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg border border-slate-200 transition-colors cursor-pointer"
+                          title="Chỉnh sửa chi tiết thiết bị"
+                        >
+                          <Pencil size={14} />
+                        </button>
+                      )}
+
+                      {/* Expand / Collapse history */}
+                      <button
+                        type="button"
+                        onClick={() => toggleExpand(key)}
+                        className={`p-1.5 rounded-lg border transition-all cursor-pointer flex items-center gap-1 text-xs font-semibold ${
+                          isExpanded
+                            ? 'bg-blue-50 text-blue-600 border-blue-200'
+                            : 'text-slate-500 hover:text-slate-800 border-slate-200 hover:bg-slate-50'
+                        }`}
+                        title="Xem lịch sử hoạt động"
+                      >
+                        <History size={14} />
+                        <ChevronDown size={14} className={`transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
+                      </button>
                     </div>
                   </div>
                 </div>
-                <div className="flex items-center gap-4">
-                  <div className="text-right">
-                    <div className={`text-sm font-bold ${
-                      daysToMaintenance === null 
-                        ? 'text-slate-400'
-                        : daysToMaintenance < 0 
-                        ? 'text-red-600' 
-                        : daysToMaintenance < warningDaysBD 
-                        ? 'text-orange-500' 
-                        : 'text-slate-600'
-                    }`}>
-                      Kiến nghị: {nextDate ? format(nextDate, 'dd/MM/yyyy') : 'Chưa đặt lịch'}
-                    </div>
-                    <div className="text-[10px] text-slate-400 italic">
-                      {daysToMaintenance === null 
-                        ? 'Chưa cập nhật ngày bảo trì cuối' 
-                        : daysToMaintenance < 0 
-                        ? `Đã quá hạn ${Math.abs(daysToMaintenance)} ngày` 
-                        : `Còn lại ${daysToMaintenance} ngày`}
-                    </div>
-                  </div>
-                  <ChevronRight 
-                    size={16} 
-                    className={`text-slate-400 transition-transform duration-200 ${
-                      isExpanded ? 'rotate-90 text-blue-600' : ''
-                    }`} 
+
+                {/* Collapsible History Section */}
+                <AnimatePresence initial={false}>
+                  {isExpanded && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="overflow-hidden"
+                    >
+                      {deviceLogs.length > 0 ? (
+                        <div className="px-5 pb-5 pt-3 border-t border-slate-100 bg-slate-50/40">
+                          <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-3 flex items-center justify-between">
+                            <span className="flex items-center gap-1.5">
+                              <History size={13} className="text-blue-500" />
+                              Lịch sử hoạt động & xác nhận ({deviceLogs.length})
+                            </span>
+                            <span className="text-[10px] lowercase text-slate-400 font-normal">mới nhất trước</span>
+                          </div>
+                          <div className="relative pl-5 border-l-2 border-slate-200 space-y-3 ml-2">
+                            {deviceLogs.map(log => (
+                              <div key={log.id} className="relative text-xs">
+                                <span className="absolute -left-[27px] top-1 flex h-2.5 w-2.5 items-center justify-center rounded-full bg-blue-500 ring-4 ring-white" />
+                                <div className="flex items-center gap-2 text-slate-400 font-medium">
+                                  <span className="font-bold text-slate-600">{formatDisplayDate(log.date)}</span>
+                                  <span className="px-1.5 py-0.5 text-[9px] font-extrabold uppercase rounded border bg-blue-50 text-blue-700 border-blue-200/60">
+                                    {log.categoryLabel || 'Sự kiện'}
+                                  </span>
+                                  <span className="text-slate-400 text-[11px]">bởi {log.user}</span>
+                                </div>
+                                <p className="mt-1 font-semibold text-slate-700 leading-relaxed">{log.description}</p>
+                                {log.notes && (
+                                  <p className="mt-0.5 text-slate-500 italic bg-white p-2 rounded-lg border border-slate-200/70 font-sans">
+                                    {log.notes}
+                                  </p>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="px-5 pb-5 pt-4 border-t border-slate-100 bg-slate-50/30 text-center py-5 text-slate-400">
+                          <History size={18} className="mx-auto mb-1 opacity-30" />
+                          <p className="text-xs font-semibold">Chưa ghi nhận lịch sử thực hiện nào cho thiết bị này.</p>
+                        </div>
+                      )}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* Quick Confirmation Modal */}
+      {confirmModalData.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-150">
+            {/* Modal Header */}
+            <div className="px-5 py-4 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 size={18} className="text-emerald-600" />
+                <h4 className="font-bold text-slate-800 text-sm sm:text-base">Xác nhận hoàn thành</h4>
+              </div>
+              <button
+                type="button"
+                onClick={() => setConfirmModalData(prev => ({ ...prev, isOpen: false }))}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-200/50"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 space-y-4">
+              <div className="p-3 bg-blue-50/60 rounded-xl border border-blue-100 text-xs text-blue-900 font-medium">
+                {confirmModalData.title}
+              </div>
+
+              {/* Completion / Issue Date */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Ngày hoàn thành / Ngày cấp mới:
+                </label>
+                <input
+                  type="date"
+                  value={confirmModalData.issueDate}
+                  onChange={(e) => handleModalPeriodOrDateChange(e.target.value, confirmModalData.periodMonths)}
+                  className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+                />
+              </div>
+
+              {/* Period in Months */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Chu kỳ gia hạn tiếp theo (tháng):
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min="1"
+                    max="120"
+                    value={confirmModalData.periodMonths}
+                    onChange={(e) => handleModalPeriodOrDateChange(confirmModalData.issueDate, parseInt(e.target.value) || 12)}
+                    className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
                   />
+                  <div className="flex items-center gap-1 shrink-0">
+                    {[6, 12, 24, 36].map(m => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => handleModalPeriodOrDateChange(confirmModalData.issueDate, m)}
+                        className={`px-2 py-1.5 rounded-lg text-xs font-bold border ${
+                          confirmModalData.periodMonths === m
+                            ? 'bg-blue-600 text-white border-blue-600'
+                            : 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200'
+                        }`}
+                      >
+                        {m}T
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
 
-              {/* Card Collapsible Timeline Area */}
-              <AnimatePresence initial={false}>
-                {isExpanded && (
-                  <motion.div
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: 'auto', opacity: 1 }}
-                    exit={{ height: 0, opacity: 0 }}
-                    transition={{ duration: 0.2 }}
-                    className="overflow-hidden"
-                  >
-                    {thisLogs.length > 0 ? (
-                      <div className="px-6 pb-6 pt-2 border-t border-slate-100 bg-slate-50/20">
-                        <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2">
-                          <History size={12} className="text-blue-500" />
-                          <span>Dòng thời gian lịch sử hoạt động ({thisLogs.length})</span>
-                        </div>
-                        <div className="relative pl-5 border-l border-slate-200 space-y-4 ml-2">
-                          {thisLogs.map(log => (
-                            <div key={log.id} className="relative text-xs">
-                              {/* Bullet node */}
-                              <span className="absolute -left-[24px] top-1 flex h-2 w-2 items-center justify-center rounded-full bg-blue-500 ring-4 ring-white" />
-                              <div className="flex items-center gap-2 text-slate-400 font-medium">
-                                <span className="font-bold text-slate-500">{formatDisplayDate(log.date)}</span>
-                                <span className="px-1.5 py-0.5 text-[9px] font-extrabold uppercase rounded border bg-blue-50 text-blue-700 border-blue-200/50">
-                                  {log.categoryLabel || 'Sự kiện'}
-                                </span>
-                                <span className="text-slate-450 text-[11px]">bởi {log.user}</span>
-                              </div>
-                              <p className="mt-1 font-semibold text-slate-700 leading-relaxed">{log.description}</p>
-                              {log.notes && (
-                                <p className="mt-0.5 text-slate-400 italic leading-snug font-medium bg-slate-50 p-2 rounded-lg border border-slate-100/50">
-                                  {log.notes}
-                                </p>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="px-6 pb-6 pt-4 border-t border-slate-100 bg-slate-50/20 text-center py-6 text-slate-400">
-                        <History size={20} className="mx-auto mb-1.5 opacity-30" />
-                        <p className="text-xs font-semibold">Chưa ghi nhận lịch sử bảo dưỡng nào cho thiết bị này.</p>
-                      </div>
-                    )}
-                  </motion.div>
-                )}
-              </AnimatePresence>
+              {/* Calculated Next Expiry */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Ngày hết hạn tiếp theo (tính tự động):
+                </label>
+                <input
+                  type="date"
+                  value={confirmModalData.targetExpiryDate}
+                  onChange={(e) => setConfirmModalData(prev => ({ ...prev, targetExpiryDate: e.target.value }))}
+                  className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono font-bold text-blue-700"
+                />
+              </div>
             </div>
-          );
-        })}
-      </div>
+
+            {/* Modal Footer */}
+            <div className="px-5 py-3 border-t border-slate-100 bg-slate-50 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setConfirmModalData(prev => ({ ...prev, isOpen: false }))}
+                className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200/60 rounded-xl transition-colors"
+              >
+                Hủy bỏ
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveQuickConfirm}
+                className="px-5 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-sm transition-all"
+              >
+                Lưu & Xác nhận xong
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+
+const MaintenanceSchedule = ScheduleManagementPanel;
 
 interface SettingsPanelProps {
   isDriveConnected: boolean;
@@ -3883,6 +4661,7 @@ interface SettingsPanelProps {
   onOpenFirestoreRulesModal?: () => void;
   firestorePermissionError?: boolean;
   onRetryFirestoreSync?: () => void;
+  onClearAllData?: () => void;
 }
 
 const SettingsPanel: React.FC<SettingsPanelProps> = ({
@@ -3895,6 +4674,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   setDriveFolderIds,
   onUnauthorizedDomainError,
   askConfirmation,
+  onClearAllData,
   warningDaysGCP,
   setWarningDaysGCP,
   warningDaysGKD,
@@ -4703,6 +5483,47 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 className="px-4 py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-bold rounded-xl transition-all cursor-pointer inline-flex items-center gap-1.5"
               >
                 Thử kết nối lại
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* SECTION: Quản trị Dữ liệu & Triển khai Sản xuất */}
+      <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+        <div className="p-8 border-b border-slate-100 bg-slate-50/50">
+          <div className="flex items-center gap-4 mb-2">
+            <div className="p-3 bg-rose-600 text-white rounded-2xl shadow-lg shadow-rose-100">
+              <Database size={24} />
+            </div>
+            <div>
+              <h2 className="text-2xl font-bold text-slate-800 tracking-tight">Quản trị Dữ liệu & Sẵn sàng Triển khai</h2>
+              <p className="text-sm text-slate-500">Chuẩn bị cơ sở dữ liệu sạch, xóa dữ liệu thử nghiệm để đưa vào vận hành chính thức</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="p-8 space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 bg-rose-50/50 rounded-2xl border border-rose-100">
+            <div>
+              <div className="font-bold text-slate-800 text-sm flex items-center gap-2">
+                <span>Xóa sạch dữ liệu mẫu trong cơ sở dữ liệu</span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase bg-rose-100 text-rose-700">
+                  Chuẩn bị Deploy
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 mt-1 max-w-xl leading-relaxed">
+                Thao tác này sẽ xóa toàn bộ thiết bị và nhật ký hoạt động thử nghiệm khỏi cơ sở dữ liệu Firestore, đưa hệ thống về trạng thái sạch 100% để sẵn sàng nhập danh sách thiết bị thật từ bệnh viện.
+              </p>
+            </div>
+            {onClearAllData && (
+              <button
+                type="button"
+                onClick={onClearAllData}
+                className="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl shadow-sm transition-all cursor-pointer whitespace-nowrap self-start sm:self-auto shrink-0 inline-flex items-center gap-2"
+              >
+                <Trash2 size={15} />
+                <span>Xóa sạch dữ liệu mẫu</span>
               </button>
             )}
           </div>
