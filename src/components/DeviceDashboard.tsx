@@ -2500,7 +2500,7 @@ const DeviceDashboard: React.FC = () => {
               initial={{ opacity: 0, scale: 0.9, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="relative w-full max-w-2xl bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+              className="relative w-full max-w-3xl bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
             >
               <div className="px-8 py-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
                 <div>
@@ -3110,20 +3110,22 @@ const DeviceForm = ({ initialData, onSave, onCancel }: { initialData?: Device, o
     onSave(formData);
   };
 
-  const inputClass = "w-full rounded-xl bg-slate-50 border border-slate-200 px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 transition-all font-sans";
-  const labelClass = "block text-xs font-bold text-slate-500 uppercase mb-1.5 ml-1";
+  const inputClass = "w-full rounded-xl bg-slate-50 border border-slate-200 px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 transition-all font-sans text-slate-800";
+  const labelClass = "block text-xs font-bold text-slate-500 uppercase mb-1.5 ml-0.5 tracking-wider";
+  const gridLabelClass = "block text-xs font-bold text-slate-600 uppercase mb-1.5 ml-0.5 min-h-[30px] flex items-end tracking-tight leading-tight";
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
-      <div className="grid grid-cols-2 gap-6">
-        <div className="col-span-2">
+      {/* 1. THÔNG TIN CHUNG THIẾT BỊ */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5">
+        <div className="md:col-span-2">
           <label className={labelClass}>Tên thiết bị</label>
           <input 
             required
             className={inputClass}
             value={formData.name}
             onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-            placeholder="Ví dụ: Máy X-quang DR"
+            placeholder="Ví dụ: Máy X-quang kỹ thuật số (DR), Máy CT Scanner..."
           />
         </div>
         <div>
@@ -3133,7 +3135,7 @@ const DeviceForm = ({ initialData, onSave, onCancel }: { initialData?: Device, o
             className={inputClass}
             value={formData.model}
             onChange={(e) => setFormData({ ...formData, model: e.target.value })}
-            placeholder="Ví dụ: Titan 2000"
+            placeholder="Ví dụ: Titan 2000, Somatom Go..."
           />
         </div>
         <div>
@@ -3153,7 +3155,7 @@ const DeviceForm = ({ initialData, onSave, onCancel }: { initialData?: Device, o
             className={inputClass}
             value={formData.manufacturer}
             onChange={(e) => setFormData({ ...formData, manufacturer: e.target.value })}
-            placeholder="Ví dụ: Siemens"
+            placeholder="Ví dụ: Siemens, GE Healthcare, Philips..."
           />
         </div>
         <div>
@@ -3163,7 +3165,7 @@ const DeviceForm = ({ initialData, onSave, onCancel }: { initialData?: Device, o
             className={inputClass}
             value={formData.origin}
             onChange={(e) => setFormData({ ...formData, origin: e.target.value })}
-            placeholder="Ví dụ: Đức"
+            placeholder="Ví dụ: Đức, Mỹ, Nhật Bản..."
           />
         </div>
         <div>
@@ -3173,46 +3175,62 @@ const DeviceForm = ({ initialData, onSave, onCancel }: { initialData?: Device, o
             required
             className={inputClass}
             value={formData.yearOfProduction}
-            onChange={(e) => setFormData({ ...formData, yearOfProduction: parseInt(e.target.value) })}
+            onChange={(e) => setFormData({ ...formData, yearOfProduction: parseInt(e.target.value) || new Date().getFullYear() })}
+          />
+        </div>
+        <div>
+          <label className={labelClass}>Khoa / Phòng đặt máy</label>
+          <input 
+            className={inputClass}
+            value={formData.department || ''}
+            onChange={(e) => setFormData({ ...formData, department: e.target.value })}
+            placeholder="Ví dụ: Phòng X-Quang 1, Khoa CĐHA..."
+          />
+        </div>
+        <div>
+          <label className={labelClass}>Người quản lý thiết bị</label>
+          <input 
+            className={inputClass}
+            value={formData.manager || ''}
+            onChange={(e) => setFormData({ ...formData, manager: e.target.value })}
+            placeholder="Ví dụ: Nguyễn Mạnh Hà, Kỹ sư phụ trách..."
           />
         </div>
         <div>
           <label className={labelClass}>Chu kỳ bảo trì (Tháng)</label>
           <input 
             type="number"
+            min="1"
             className={inputClass}
             value={formData.maintenancePeriod !== undefined ? formData.maintenancePeriod : ''}
             onChange={(e) => setFormData({ ...formData, maintenancePeriod: e.target.value ? parseInt(e.target.value) : undefined })}
-            placeholder="Ví dụ: 6, 12..."
-          />
-        </div>
-        <div className="col-span-2">
-          <label className={labelClass}>Người quản lý thiết bị</label>
-          <input 
-            className={inputClass}
-            value={formData.manager || ''}
-            onChange={(e) => setFormData({ ...formData, manager: e.target.value })}
-            placeholder="Ví dụ: Nguyễn Mạnh Hà, Trần Thị Mai..."
+            placeholder="Ví dụ: 3, 6, 12 tháng..."
           />
         </div>
       </div>
 
       <div className="h-px bg-slate-100 my-2" />
 
+      {/* 2. HỒ SƠ PHÁP LÝ & KIỂM ĐỊNH (3 THẺ CÂN ĐỐI) */}
       <div className="space-y-4">
         <div className="text-xs font-bold text-blue-600 uppercase tracking-widest bg-blue-50 py-2 px-4 rounded-lg inline-block w-full">
-          Hồ sơ pháp lý & Kiểm định
+          Hồ sơ pháp lý, Kiểm định & An toàn bức xạ
         </div>
 
         {/* Giấy phép GCP Section */}
-        <div className="p-4 bg-slate-50/50 rounded-2xl border border-slate-100 space-y-3">
-          <div className="text-xs font-bold text-slate-700 font-sans flex items-center gap-2">
-            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-100 text-[10px] text-blue-700 font-bold">1</span>
-            <span>THÔNG TIN GIẤY PHÉP (GCP)</span>
+        <div className="p-4 sm:p-5 bg-slate-50/70 rounded-2xl border border-slate-200/80 space-y-3">
+          <div className="text-xs font-bold text-slate-700 font-sans flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-100 text-[10px] text-blue-700 font-bold">1</span>
+              <span className="tracking-wide">THÔNG TIN GIẤY PHÉP (GCP)</span>
+            </div>
+            <span className="hidden sm:inline-block text-[10px] text-blue-600 font-medium bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100">
+              Giấy phép sử dụng / an toàn bức xạ
+            </span>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <label className={labelClass}>Ngày cấp / gia hạn gần nhất</label>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5 sm:gap-4 items-end">
+            <div className="flex flex-col justify-end">
+              <label className={gridLabelClass}>Ngày cấp / gia hạn</label>
               <input 
                 type="date"
                 className={inputClass}
@@ -3220,8 +3238,8 @@ const DeviceForm = ({ initialData, onSave, onCancel }: { initialData?: Device, o
                 onChange={(e) => handleGcpChange({ gcpIssueDate: e.target.value })}
               />
             </div>
-            <div>
-              <label className={labelClass}>Thời hạn hiệu lực (tháng)</label>
+            <div className="flex flex-col justify-end">
+              <label className={gridLabelClass}>Thời hạn (tháng)</label>
               <input 
                 type="number"
                 min="1"
@@ -3231,11 +3249,14 @@ const DeviceForm = ({ initialData, onSave, onCancel }: { initialData?: Device, o
                 placeholder="Ví dụ: 12, 24, 36..."
               />
             </div>
-            <div>
-              <label className={labelClass}>Hạn Giấy phép (GCP)</label>
+            <div className="flex flex-col justify-end">
+              <label className={gridLabelClass}>
+                <span>Hạn Giấy phép (GCP)</span>
+                <span className="text-[10px] lowercase font-normal text-blue-600 ml-1.5">(tự tính)</span>
+              </label>
               <input 
                 type="date"
-                className={`${inputClass} bg-blue-50/30 border-blue-100 font-semibold text-blue-900`}
+                className={`${inputClass} bg-blue-50/50 border-blue-200 font-bold text-blue-900`}
                 value={formData.expiryGCP || ''}
                 onChange={(e) => handleGcpChange({ expiryGCP: e.target.value })}
               />
@@ -3244,14 +3265,19 @@ const DeviceForm = ({ initialData, onSave, onCancel }: { initialData?: Device, o
         </div>
 
         {/* Kiểm định GKD Section */}
-        <div className="p-4 bg-slate-50/50 rounded-2xl border border-slate-100 space-y-3">
-          <div className="text-xs font-bold text-slate-700 font-sans flex items-center gap-2">
-            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-100 text-[10px] text-emerald-700 font-bold">2</span>
-            <span>THÔNG TIN KIỂM ĐỊNH (GKĐ)</span>
+        <div className="p-4 sm:p-5 bg-slate-50/70 rounded-2xl border border-slate-200/80 space-y-3">
+          <div className="text-xs font-bold text-slate-700 font-sans flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-100 text-[10px] text-emerald-700 font-bold">2</span>
+              <span className="tracking-wide">THÔNG TIN KIỂM ĐỊNH (GKĐ)</span>
+            </div>
+            <span className="hidden sm:inline-block text-[10px] text-emerald-600 font-medium bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">
+              Kiểm định kỹ thuật & an toàn bức xạ
+            </span>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <label className={labelClass}>Ngày kiểm định thực tế</label>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5 sm:gap-4 items-end">
+            <div className="flex flex-col justify-end">
+              <label className={gridLabelClass}>Ngày kiểm định thực tế</label>
               <input 
                 type="date"
                 className={inputClass}
@@ -3259,8 +3285,8 @@ const DeviceForm = ({ initialData, onSave, onCancel }: { initialData?: Device, o
                 onChange={(e) => handleGkdChange({ gkdIssueDate: e.target.value })}
               />
             </div>
-            <div>
-              <label className={labelClass}>Thời hạn hiệu lực (tháng)</label>
+            <div className="flex flex-col justify-end">
+              <label className={gridLabelClass}>Thời hạn (tháng)</label>
               <input 
                 type="number"
                 min="1"
@@ -3270,11 +3296,14 @@ const DeviceForm = ({ initialData, onSave, onCancel }: { initialData?: Device, o
                 placeholder="Ví dụ: 12, 24, 36..."
               />
             </div>
-            <div>
-              <label className={labelClass}>Hạn Kiểm định (GKĐ)</label>
+            <div className="flex flex-col justify-end">
+              <label className={gridLabelClass}>
+                <span>Hạn Kiểm định (GKĐ)</span>
+                <span className="text-[10px] lowercase font-normal text-emerald-600 ml-1.5">(tự tính)</span>
+              </label>
               <input 
                 type="date"
-                className={`${inputClass} bg-emerald-50/30 border-emerald-100 font-semibold text-emerald-900`}
+                className={`${inputClass} bg-emerald-50/50 border-emerald-200 font-bold text-emerald-900`}
                 value={formData.expiryGKD || ''}
                 onChange={(e) => handleGkdChange({ expiryGKD: e.target.value })}
               />
@@ -3283,14 +3312,19 @@ const DeviceForm = ({ initialData, onSave, onCancel }: { initialData?: Device, o
         </div>
 
         {/* Kiểm xạ GKX Section */}
-        <div className="p-4 bg-slate-50/50 rounded-2xl border border-slate-100 space-y-3">
-          <div className="text-xs font-bold text-slate-700 font-sans flex items-center gap-2">
-            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-100 text-[10px] text-amber-700 font-bold">3</span>
-            <span>THÔNG TIN KIỂM XẠ (GKX)</span>
+        <div className="p-4 sm:p-5 bg-slate-50/70 rounded-2xl border border-slate-200/80 space-y-3">
+          <div className="text-xs font-bold text-slate-700 font-sans flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-100 text-[10px] text-amber-700 font-bold">3</span>
+              <span className="tracking-wide">THÔNG TIN KIỂM XẠ (GKX)</span>
+            </div>
+            <span className="hidden sm:inline-block text-[10px] text-amber-600 font-medium bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100">
+              Đo kiểm xạ an toàn phòng & máy
+            </span>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <label className={labelClass}>Ngày kiểm xạ thực tế</label>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5 sm:gap-4 items-end">
+            <div className="flex flex-col justify-end">
+              <label className={gridLabelClass}>Ngày đo kiểm xạ thực tế</label>
               <input 
                 type="date"
                 className={inputClass}
@@ -3298,8 +3332,8 @@ const DeviceForm = ({ initialData, onSave, onCancel }: { initialData?: Device, o
                 onChange={(e) => handleGkxChange({ gkxIssueDate: e.target.value })}
               />
             </div>
-            <div>
-              <label className={labelClass}>Thời hạn hiệu lực (tháng)</label>
+            <div className="flex flex-col justify-end">
+              <label className={gridLabelClass}>Thời hạn (tháng)</label>
               <input 
                 type="number"
                 min="1"
@@ -3309,11 +3343,14 @@ const DeviceForm = ({ initialData, onSave, onCancel }: { initialData?: Device, o
                 placeholder="Ví dụ: 12, 24, 36..."
               />
             </div>
-            <div>
-              <label className={labelClass}>Hạn Kiểm xạ (GKX)</label>
+            <div className="flex flex-col justify-end">
+              <label className={gridLabelClass}>
+                <span>Hạn Kiểm xạ (GKX)</span>
+                <span className="text-[10px] lowercase font-normal text-amber-600 ml-1.5">(tự tính)</span>
+              </label>
               <input 
                 type="date"
-                className={`${inputClass} bg-amber-50/30 border-amber-100 font-semibold text-amber-900`}
+                className={`${inputClass} bg-amber-50/50 border-amber-200 font-bold text-amber-900`}
                 value={formData.expiryGKX || ''}
                 onChange={(e) => handleGkxChange({ expiryGKX: e.target.value })}
               />
@@ -3321,16 +3358,27 @@ const DeviceForm = ({ initialData, onSave, onCancel }: { initialData?: Device, o
           </div>
         </div>
 
-        <div className="col-span-2">
-          <label className={labelClass}>Lần bảo trì cuối cùng</label>
-          <input 
-            type="date"
-            className={inputClass}
-            value={formData.lastMaintenance}
-            onChange={(e) => setFormData({ ...formData, lastMaintenance: e.target.value })}
-          />
+        {/* 3. BẢO TRÌ & GHI CHÚ */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+          <div>
+            <label className={labelClass}>Lần bảo trì cuối cùng</label>
+            <input 
+              type="date"
+              className={inputClass}
+              value={formData.lastMaintenance}
+              onChange={(e) => setFormData({ ...formData, lastMaintenance: e.target.value })}
+            />
+          </div>
+          <div>
+            <label className={labelClass}>Trạng thái hoạt động</label>
+            <div className="px-4 py-2.5 rounded-xl bg-slate-100 text-slate-600 text-sm font-semibold flex items-center justify-between">
+              <span>Đang vận hành trong phòng máy</span>
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+            </div>
+          </div>
         </div>
-        <div className="col-span-2">
+
+        <div>
           <label className={labelClass}>Ghi chú của người quản lý</label>
           <textarea 
             rows={3}
