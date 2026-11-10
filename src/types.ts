@@ -28,6 +28,10 @@ export interface Device {
   expiryGCP: string; // Giấy phép (Ngày hết hạn)
   expiryGKD: string; // Kiểm định (Ngày hết hạn)
   expiryGKX?: string; // Kiểm xạ (Ngày hết hạn)
+  noGCP?: boolean; // Tắt / Không áp dụng Giấy phép GCP
+  noGKD?: boolean; // Tắt / Không áp dụng Kiểm định GKĐ
+  noGKX?: boolean; // Tắt / Không áp dụng Đo kiểm xạ GKX
+  department?: string; // Khoa / Phòng đặt máy
   gcpIssueDate?: string; // Ngày cấp / gia hạn giấy phép gần nhất
   gcpPeriod?: number; // Thời hạn giấy phép (tháng)
   gkdIssueDate?: string; // Ngày kiểm định gần nhất

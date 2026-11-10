@@ -87,9 +87,9 @@ export const DeviceStatsCharts: React.FC<DeviceStatsChartsProps> = ({
   // 1. Process all devices with unified metrics
   const processedDevices: ProcessedDeviceInfo[] = useMemo(() => {
     return devices.map(d => {
-      const gkdDays = getDaysRemaining(d.expiryGKD);
-      const gcpDays = getDaysRemaining(d.expiryGCP);
-      const gkxDays = getDaysRemaining(d.expiryGKX);
+      const gkdDays = d.noGKD ? null : getDaysRemaining(d.expiryGKD);
+      const gcpDays = d.noGCP ? null : getDaysRemaining(d.expiryGCP);
+      const gkxDays = d.noGKX ? null : getDaysRemaining(d.expiryGKX);
 
       const validDays = [gkdDays, gcpDays, gkxDays].filter((x): x is number => x !== null);
       const minInspectionDays = validDays.length > 0 ? Math.min(...validDays) : null;

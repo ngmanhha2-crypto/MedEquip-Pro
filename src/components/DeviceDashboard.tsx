@@ -152,13 +152,13 @@ const DeviceDashboard: React.FC = () => {
     let bdUrgent = 0;
 
     devices.forEach(d => {
-      const daysGCP = getDaysRemaining(d.expiryGCP);
+      const daysGCP = d.noGCP ? null : getDaysRemaining(d.expiryGCP);
       if (daysGCP !== null && daysGCP <= warningDaysGCP) gcpUrgent++;
 
-      const daysGKD = getDaysRemaining(d.expiryGKD);
+      const daysGKD = d.noGKD ? null : getDaysRemaining(d.expiryGKD);
       if (daysGKD !== null && daysGKD <= warningDaysGKD) gkdUrgent++;
 
-      const daysGKX = getDaysRemaining(d.expiryGKX);
+      const daysGKX = d.noGKX ? null : getDaysRemaining(d.expiryGKX);
       if (daysGKX !== null && daysGKX <= warningDaysGKX) gkxUrgent++;
 
       if (d.lastMaintenance && d.maintenancePeriod) {
@@ -972,9 +972,9 @@ const DeviceDashboard: React.FC = () => {
 
   const filteredDevices = useMemo(() => {
     return devices.filter(d => {
-      const gkdDays = getDaysRemaining(d.expiryGKD);
-      const gcpDays = getDaysRemaining(d.expiryGCP);
-      const gkxDays = getDaysRemaining(d.expiryGKX);
+      const gkdDays = d.noGKD ? null : getDaysRemaining(d.expiryGKD);
+      const gcpDays = d.noGCP ? null : getDaysRemaining(d.expiryGCP);
+      const gkxDays = d.noGKX ? null : getDaysRemaining(d.expiryGKX);
       const term = searchTerm.toLowerCase().trim();
       const isSearchMatch = 
         (d.name || '').toLowerCase().includes(term) || 
@@ -1009,9 +1009,9 @@ const DeviceDashboard: React.FC = () => {
       'Hãng sản xuất': d.manufacturer || '',
       'Xuất xứ': d.origin || '',
       'Năm SX': d.yearOfProduction || '',
-      'Hạn GCP': formatDisplayDate(d.expiryGCP),
-      'Hạn GKĐ': formatDisplayDate(d.expiryGKD),
-      'Hạn Kiểm xạ (GKX)': formatDisplayDate(d.expiryGKX),
+      'Hạn GCP': d.noGCP ? '' : formatDisplayDate(d.expiryGCP),
+      'Hạn GKĐ': d.noGKD ? '' : formatDisplayDate(d.expiryGKD),
+      'Hạn Kiểm xạ (GKX)': d.noGKX ? '' : formatDisplayDate(d.expiryGKX),
       'Bảo dưỡng lần cuối': formatDisplayDate(d.lastMaintenance),
       'Chu kỳ bảo trì (tháng)': d.maintenancePeriod || 6,
       'Người quản lý': d.manager || '',
@@ -1062,6 +1062,14 @@ const DeviceDashboard: React.FC = () => {
           const userPrefix = auth.currentUser ? auth.currentUser.uid.slice(0, 8) : 'dev';
           const newId = `${userPrefix}_import_${Date.now()}_${idx + 1}`;
           
+          const rawGCP = String(row['Hạn GCP'] || row['expiryGCP'] || '').trim();
+          const rawGKD = String(row['Hạn GKĐ'] || row['expiryGKD'] || '').trim();
+          const rawGKX = String(row['Hạn Kiểm xạ (GKX)'] || row['Hạn GKX'] || row['expiryGKX'] || '').trim();
+
+          const isNoGCP = rawGCP.toLowerCase().includes('không áp dụng') || rawGCP.toLowerCase().includes('khong ap dung') || row['noGCP'] === true;
+          const isNoGKD = rawGKD.toLowerCase().includes('không áp dụng') || rawGKD.toLowerCase().includes('khong ap dung') || row['noGKD'] === true;
+          const isNoGKX = rawGKX.toLowerCase().includes('không áp dụng') || rawGKX.toLowerCase().includes('khong ap dung') || row['noGKX'] === true;
+
           return {
             id: newId,
             name: String(row['Tên thiết bị'] || row['Tên'] || row['name'] || `Thiết bị ${idx + 1}`).trim(),
@@ -1070,9 +1078,12 @@ const DeviceDashboard: React.FC = () => {
             manufacturer: String(row['Hãng sản xuất'] || row['Hãng'] || row['Hãng/Xuất xứ'] || row['manufacturer'] || '').trim(),
             origin: String(row['Xuất xứ'] || row['origin'] || '').trim(),
             yearOfProduction: Number(row['Năm SX'] || row['yearOfProduction'] || new Date().getFullYear()),
-            expiryGCP: String(row['Hạn GCP'] || row['expiryGCP'] || '').trim(),
-            expiryGKD: String(row['Hạn GKĐ'] || row['expiryGKD'] || '').trim(),
-            expiryGKX: String(row['Hạn Kiểm xạ (GKX)'] || row['Hạn GKX'] || row['expiryGKX'] || '').trim(),
+            expiryGCP: isNoGCP ? '' : rawGCP,
+            expiryGKD: isNoGKD ? '' : rawGKD,
+            expiryGKX: isNoGKX ? '' : rawGKX,
+            noGCP: isNoGCP,
+            noGKD: isNoGKD,
+            noGKX: isNoGKX,
             lastMaintenance: String(row['Bảo dưỡng lần cuối'] || row['lastMaintenance'] || '').trim(),
             maintenancePeriod: Number(row['Chu kỳ bảo trì (tháng)'] || row['Chu kỳ bảo trì'] || row['maintenancePeriod'] || 6),
             manager: String(row['Người quản lý'] || row['manager'] || '').trim(),
@@ -1542,16 +1553,16 @@ const DeviceDashboard: React.FC = () => {
 
     const todayStr = new Date().toISOString().split('T')[0];
     const expiredList = devices.filter(d => {
-      const gkd = getDaysRemaining(d.expiryGKD);
-      const gcp = getDaysRemaining(d.expiryGCP);
-      const gkx = getDaysRemaining(d.expiryGKX);
+      const gkd = d.noGKD ? null : getDaysRemaining(d.expiryGKD);
+      const gcp = d.noGCP ? null : getDaysRemaining(d.expiryGCP);
+      const gkx = d.noGKX ? null : getDaysRemaining(d.expiryGKX);
       return (gkd !== null && gkd < 0) || (gcp !== null && gcp < 0) || (gkx !== null && gkx < 0);
     });
 
     const warningList = devices.filter(d => {
-      const gkd = getDaysRemaining(d.expiryGKD);
-      const gcp = getDaysRemaining(d.expiryGCP);
-      const gkx = getDaysRemaining(d.expiryGKX);
+      const gkd = d.noGKD ? null : getDaysRemaining(d.expiryGKD);
+      const gcp = d.noGCP ? null : getDaysRemaining(d.expiryGCP);
+      const gkx = d.noGKX ? null : getDaysRemaining(d.expiryGKX);
       return (gkd !== null && gkd >= 0 && gkd <= warningDaysGKD) || 
              (gcp !== null && gcp >= 0 && gcp <= warningDaysGCP) ||
              (gkx !== null && gkx >= 0 && gkx <= warningDaysGKX);
@@ -1568,9 +1579,9 @@ const DeviceDashboard: React.FC = () => {
     if (expiredList.length > 0) {
       msg += `⚠️ <b>DANH SÁCH THIẾT BỊ QUÁ HẠN:</b>\n`;
       expiredList.slice(0, 8).forEach((d, i) => {
-        const gkdDays = getDaysRemaining(d.expiryGKD);
-        const gcpDays = getDaysRemaining(d.expiryGCP);
-        const gkxDays = getDaysRemaining(d.expiryGKX);
+        const gkdDays = d.noGKD ? null : getDaysRemaining(d.expiryGKD);
+        const gcpDays = d.noGCP ? null : getDaysRemaining(d.expiryGCP);
+        const gkxDays = d.noGKX ? null : getDaysRemaining(d.expiryGKX);
         const reasons = [];
         if (gkdDays !== null && gkdDays < 0) reasons.push(`GKĐ quá ${Math.abs(gkdDays)} ngày`);
         if (gcpDays !== null && gcpDays < 0) reasons.push(`GCP quá ${Math.abs(gcpDays)} ngày`);
@@ -1587,9 +1598,9 @@ const DeviceDashboard: React.FC = () => {
     if (warningList.length > 0) {
       msg += `🔴 <b>DANH SÁCH THIẾT BỊ SẮP HẾT HẠN (CẬN HẠN):</b>\n`;
       warningList.slice(0, 8).forEach((d, i) => {
-        const gkdDays = getDaysRemaining(d.expiryGKD);
-        const gcpDays = getDaysRemaining(d.expiryGCP);
-        const gkxDays = getDaysRemaining(d.expiryGKX);
+        const gkdDays = d.noGKD ? null : getDaysRemaining(d.expiryGKD);
+        const gcpDays = d.noGCP ? null : getDaysRemaining(d.expiryGCP);
+        const gkxDays = d.noGKX ? null : getDaysRemaining(d.expiryGKX);
         const warnDetails = [];
         if (gkdDays !== null && gkdDays >= 0 && gkdDays <= warningDaysGKD) warnDetails.push(`GKĐ còn ${gkdDays} ngày`);
         if (gcpDays !== null && gcpDays >= 0 && gcpDays <= warningDaysGCP) warnDetails.push(`GCP còn ${gcpDays} ngày`);
@@ -1613,16 +1624,16 @@ const DeviceDashboard: React.FC = () => {
 
   const stats = useMemo(() => {
     const expired = devices.filter(d => {
-      const gkd = getDaysRemaining(d.expiryGKD);
-      const gcp = getDaysRemaining(d.expiryGCP);
-      const gkx = getDaysRemaining(d.expiryGKX);
+      const gkd = d.noGKD ? null : getDaysRemaining(d.expiryGKD);
+      const gcp = d.noGCP ? null : getDaysRemaining(d.expiryGCP);
+      const gkx = d.noGKX ? null : getDaysRemaining(d.expiryGKX);
       return (gkd !== null && gkd < 0) || (gcp !== null && gcp < 0) || (gkx !== null && gkx < 0);
     }).length;
     
     const warning = devices.filter(d => {
-      const gkd = getDaysRemaining(d.expiryGKD);
-      const gcp = getDaysRemaining(d.expiryGCP);
-      const gkx = getDaysRemaining(d.expiryGKX);
+      const gkd = d.noGKD ? null : getDaysRemaining(d.expiryGKD);
+      const gcp = d.noGCP ? null : getDaysRemaining(d.expiryGCP);
+      const gkx = d.noGKX ? null : getDaysRemaining(d.expiryGKX);
       return (gkd !== null && gkd >= 0 && gkd <= warningDaysGKD) || 
              (gcp !== null && gcp >= 0 && gcp <= warningDaysGCP) ||
              (gkx !== null && gkx >= 0 && gkx <= warningDaysGKX);
@@ -1634,9 +1645,9 @@ const DeviceDashboard: React.FC = () => {
   // Handle mock notifications
   React.useEffect(() => {
     devices.forEach(d => {
-      const gkdDays = getDaysRemaining(d.expiryGKD);
-      const gcpDays = getDaysRemaining(d.expiryGCP);
-      const gkxDays = getDaysRemaining(d.expiryGKX);
+      const gkdDays = d.noGKD ? null : getDaysRemaining(d.expiryGKD);
+      const gcpDays = d.noGCP ? null : getDaysRemaining(d.expiryGCP);
+      const gkxDays = d.noGKX ? null : getDaysRemaining(d.expiryGKX);
       
       const gkdReminder = checkReminders(gkdDays, warningDaysGKD);
       const gcpReminder = checkReminders(gcpDays, warningDaysGCP);
@@ -3062,6 +3073,9 @@ const DeviceForm = ({ initialData, onSave, onCancel }: { initialData?: Device, o
       expiryGCP: '',
       expiryGKD: '',
       expiryGKX: '',
+      noGCP: false,
+      noGKD: false,
+      noGKX: false,
       gcpIssueDate: '',
       gcpPeriod: 12,
       gkdIssueDate: '',
@@ -3071,7 +3085,8 @@ const DeviceForm = ({ initialData, onSave, onCancel }: { initialData?: Device, o
       lastMaintenance: '',
       maintenancePeriod: 6,
       notes: '',
-      manager: ''
+      manager: '',
+      department: 'Phòng X-Quang'
     };
   });
 
@@ -3107,7 +3122,23 @@ const DeviceForm = ({ initialData, onSave, onCancel }: { initialData?: Device, o
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSave(formData);
+    const finalData = { ...formData };
+    if (finalData.noGCP) {
+      finalData.expiryGCP = '';
+      finalData.gcpIssueDate = '';
+      finalData.gcpPeriod = undefined;
+    }
+    if (finalData.noGKD) {
+      finalData.expiryGKD = '';
+      finalData.gkdIssueDate = '';
+      finalData.gkdPeriod = undefined;
+    }
+    if (finalData.noGKX) {
+      finalData.expiryGKX = '';
+      finalData.gkxIssueDate = '';
+      finalData.gkxPeriod = undefined;
+    }
+    onSave(finalData);
   };
 
   const inputClass = "w-full rounded-xl bg-slate-50 border border-slate-200 px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 transition-all font-sans text-slate-800";
@@ -3218,144 +3249,288 @@ const DeviceForm = ({ initialData, onSave, onCancel }: { initialData?: Device, o
         </div>
 
         {/* Giấy phép GCP Section */}
-        <div className="p-4 sm:p-5 bg-slate-50/70 rounded-2xl border border-slate-200/80 space-y-3">
-          <div className="text-xs font-bold text-slate-700 font-sans flex items-center justify-between">
+        <div className={`p-4 sm:p-5 rounded-2xl border transition-all space-y-3 ${
+          formData.noGCP ? 'bg-slate-100/60 border-slate-200' : 'bg-slate-50/70 border-slate-200/80'
+        }`}>
+          <div className="flex flex-wrap items-center justify-between gap-2.5 pb-1 border-b border-slate-200/50">
             <div className="flex items-center gap-2">
-              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-100 text-[10px] text-blue-700 font-bold">1</span>
-              <span className="tracking-wide">THÔNG TIN GIẤY PHÉP (GCP)</span>
+              <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${
+                formData.noGCP ? 'bg-slate-200 text-slate-500' : 'bg-blue-100 text-blue-700'
+              }`}>1</span>
+              <span className={`text-xs font-bold font-sans tracking-wide ${formData.noGCP ? 'text-slate-500 line-through' : 'text-slate-700'}`}>
+                THÔNG TIN GIẤY PHÉP (GCP)
+              </span>
             </div>
-            <span className="hidden sm:inline-block text-[10px] text-blue-600 font-medium bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100">
-              Giấy phép sử dụng / an toàn bức xạ
-            </span>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5 sm:gap-4 items-end">
-            <div className="flex flex-col justify-end">
-              <label className={gridLabelClass}>Ngày cấp / gia hạn</label>
-              <input 
-                type="date"
-                className={inputClass}
-                value={formData.gcpIssueDate || ''}
-                onChange={(e) => handleGcpChange({ gcpIssueDate: e.target.value })}
-              />
-            </div>
-            <div className="flex flex-col justify-end">
-              <label className={gridLabelClass}>Thời hạn (tháng)</label>
-              <input 
-                type="number"
-                min="1"
-                className={inputClass}
-                value={formData.gcpPeriod !== undefined ? formData.gcpPeriod : ''}
-                onChange={(e) => handleGcpChange({ gcpPeriod: e.target.value ? parseInt(e.target.value) : undefined })}
-                placeholder="Ví dụ: 12, 24, 36..."
-              />
-            </div>
-            <div className="flex flex-col justify-end">
-              <label className={gridLabelClass}>
-                <span>Hạn Giấy phép (GCP)</span>
-                <span className="text-[10px] lowercase font-normal text-blue-600 ml-1.5">(tự tính)</span>
-              </label>
-              <input 
-                type="date"
-                className={`${inputClass} bg-blue-50/50 border-blue-200 font-bold text-blue-900`}
-                value={formData.expiryGCP || ''}
-                onChange={(e) => handleGcpChange({ expiryGCP: e.target.value })}
-              />
+
+            <div className="flex items-center gap-2.5">
+              <span className="hidden sm:inline-block text-[10px] text-blue-600 font-medium bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100">
+                Giấy phép an toàn bức xạ
+              </span>
+              
+              {/* Nút bật/tắt tùy chọn không cần Giấy phép */}
+              <button
+                type="button"
+                onClick={() => {
+                  const nextVal = !formData.noGCP;
+                  setFormData(prev => ({
+                    ...prev,
+                    noGCP: nextVal,
+                    ...(nextVal ? { expiryGCP: '', gcpIssueDate: '', gcpPeriod: undefined } : {})
+                  }));
+                }}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] font-bold cursor-pointer transition-all select-none ${
+                  formData.noGCP
+                    ? 'bg-slate-200/80 border-slate-300 text-slate-600 hover:bg-slate-300'
+                    : 'bg-blue-600 border-blue-600 text-white shadow-xs hover:bg-blue-700'
+                }`}
+                title={formData.noGCP ? 'Nhấn để BẬT lại yêu cầu Giấy phép' : 'Nhấn để TẮT nếu máy không cần giấy phép GCP'}
+              >
+                <span className={`w-2 h-2 rounded-full ${formData.noGCP ? 'bg-slate-400' : 'bg-white'}`}></span>
+                <span>{formData.noGCP ? 'Đã tắt (Không áp dụng)' : 'Bật (Áp dụng GCP)'}</span>
+              </button>
             </div>
           </div>
+
+          {formData.noGCP ? (
+            <div className="py-2.5 px-3.5 bg-white/80 rounded-xl border border-dashed border-slate-200 flex items-center justify-between text-xs text-slate-500">
+              <span className="flex items-center gap-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-slate-400 shrink-0"></span>
+                <span>Thiết bị được thiết lập <strong>Không áp dụng Giấy phép (GCP)</strong>. Cột GCP trong danh sách sẽ được để trống và không gửi cảnh báo quá hạn.</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setFormData(prev => ({ ...prev, noGCP: false }))}
+                className="text-blue-600 hover:text-blue-700 font-bold underline ml-2 shrink-0 cursor-pointer text-[11px]"
+              >
+                Bật lại
+              </button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5 sm:gap-4 items-end">
+              <div className="flex flex-col justify-end">
+                <label className={gridLabelClass}>Ngày cấp / gia hạn</label>
+                <input 
+                  type="date"
+                  className={inputClass}
+                  value={formData.gcpIssueDate || ''}
+                  onChange={(e) => handleGcpChange({ gcpIssueDate: e.target.value })}
+                />
+              </div>
+              <div className="flex flex-col justify-end">
+                <label className={gridLabelClass}>Thời hạn (tháng)</label>
+                <input 
+                  type="number"
+                  min="1"
+                  className={inputClass}
+                  value={formData.gcpPeriod !== undefined ? formData.gcpPeriod : ''}
+                  onChange={(e) => handleGcpChange({ gcpPeriod: e.target.value ? parseInt(e.target.value) : undefined })}
+                  placeholder="Ví dụ: 12, 24, 36..."
+                />
+              </div>
+              <div className="flex flex-col justify-end">
+                <label className={gridLabelClass}>
+                  <span>Hạn Giấy phép (GCP)</span>
+                  <span className="text-[10px] lowercase font-normal text-blue-600 ml-1.5">(tự tính)</span>
+                </label>
+                <input 
+                  type="date"
+                  className={`${inputClass} bg-blue-50/50 border-blue-200 font-bold text-blue-900`}
+                  value={formData.expiryGCP || ''}
+                  onChange={(e) => handleGcpChange({ expiryGCP: e.target.value })}
+                />
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Kiểm định GKD Section */}
-        <div className="p-4 sm:p-5 bg-slate-50/70 rounded-2xl border border-slate-200/80 space-y-3">
-          <div className="text-xs font-bold text-slate-700 font-sans flex items-center justify-between">
+        <div className={`p-4 sm:p-5 rounded-2xl border transition-all space-y-3 ${
+          formData.noGKD ? 'bg-slate-100/60 border-slate-200' : 'bg-slate-50/70 border-slate-200/80'
+        }`}>
+          <div className="flex flex-wrap items-center justify-between gap-2.5 pb-1 border-b border-slate-200/60">
             <div className="flex items-center gap-2">
-              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-100 text-[10px] text-emerald-700 font-bold">2</span>
-              <span className="tracking-wide">THÔNG TIN KIỂM ĐỊNH (GKĐ)</span>
+              <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${
+                formData.noGKD ? 'bg-slate-200 text-slate-500' : 'bg-emerald-100 text-emerald-700'
+              }`}>2</span>
+              <span className={`text-xs font-bold font-sans tracking-wide ${formData.noGKD ? 'text-slate-500 line-through' : 'text-slate-700'}`}>
+                THÔNG TIN KIỂM ĐỊNH (GKĐ)
+              </span>
             </div>
-            <span className="hidden sm:inline-block text-[10px] text-emerald-600 font-medium bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">
-              Kiểm định kỹ thuật & an toàn bức xạ
-            </span>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5 sm:gap-4 items-end">
-            <div className="flex flex-col justify-end">
-              <label className={gridLabelClass}>Ngày kiểm định thực tế</label>
-              <input 
-                type="date"
-                className={inputClass}
-                value={formData.gkdIssueDate || ''}
-                onChange={(e) => handleGkdChange({ gkdIssueDate: e.target.value })}
-              />
-            </div>
-            <div className="flex flex-col justify-end">
-              <label className={gridLabelClass}>Thời hạn (tháng)</label>
-              <input 
-                type="number"
-                min="1"
-                className={inputClass}
-                value={formData.gkdPeriod !== undefined ? formData.gkdPeriod : ''}
-                onChange={(e) => handleGkdChange({ gkdPeriod: e.target.value ? parseInt(e.target.value) : undefined })}
-                placeholder="Ví dụ: 12, 24, 36..."
-              />
-            </div>
-            <div className="flex flex-col justify-end">
-              <label className={gridLabelClass}>
-                <span>Hạn Kiểm định (GKĐ)</span>
-                <span className="text-[10px] lowercase font-normal text-emerald-600 ml-1.5">(tự tính)</span>
-              </label>
-              <input 
-                type="date"
-                className={`${inputClass} bg-emerald-50/50 border-emerald-200 font-bold text-emerald-900`}
-                value={formData.expiryGKD || ''}
-                onChange={(e) => handleGkdChange({ expiryGKD: e.target.value })}
-              />
+
+            <div className="flex items-center gap-2.5">
+              <span className="hidden sm:inline-block text-[10px] text-emerald-600 font-medium bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">
+                Kiểm định kỹ thuật máy
+              </span>
+              
+              {/* Nút bật/tắt tùy chọn không cần Kiểm định */}
+              <button
+                type="button"
+                onClick={() => {
+                  const nextVal = !formData.noGKD;
+                  setFormData(prev => ({
+                    ...prev,
+                    noGKD: nextVal,
+                    ...(nextVal ? { expiryGKD: '', gkdIssueDate: '', gkdPeriod: undefined } : {})
+                  }));
+                }}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] font-bold cursor-pointer transition-all select-none ${
+                  formData.noGKD
+                    ? 'bg-slate-200/80 border-slate-300 text-slate-600 hover:bg-slate-300'
+                    : 'bg-emerald-600 border-emerald-600 text-white shadow-xs hover:bg-emerald-700'
+                }`}
+                title={formData.noGKD ? 'Nhấn để BẬT lại yêu cầu Kiểm định' : 'Nhấn để TẮT nếu máy không cần kiểm định'}
+              >
+                <span className={`w-2 h-2 rounded-full ${formData.noGKD ? 'bg-slate-400' : 'bg-white'}`}></span>
+                <span>{formData.noGKD ? 'Đã tắt (Không áp dụng)' : 'Bật (Áp dụng GKĐ)'}</span>
+              </button>
             </div>
           </div>
+
+          {formData.noGKD ? (
+            <div className="py-2.5 px-3.5 bg-white/80 rounded-xl border border-dashed border-slate-200 flex items-center justify-between text-xs text-slate-500">
+              <span className="flex items-center gap-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-slate-400 shrink-0"></span>
+                <span>Thiết bị được thiết lập <strong>Không áp dụng Kiểm định (GKĐ)</strong>. Cột GKĐ trong danh sách sẽ được để trống và không gửi cảnh báo quá hạn.</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setFormData(prev => ({ ...prev, noGKD: false }))}
+                className="text-emerald-600 hover:text-emerald-700 font-bold underline ml-2 shrink-0 cursor-pointer text-[11px]"
+              >
+                Bật lại
+              </button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5 sm:gap-4 items-end">
+              <div className="flex flex-col justify-end">
+                <label className={gridLabelClass}>Ngày kiểm định thực tế</label>
+                <input 
+                  type="date"
+                  className={inputClass}
+                  value={formData.gkdIssueDate || ''}
+                  onChange={(e) => handleGkdChange({ gkdIssueDate: e.target.value })}
+                />
+              </div>
+              <div className="flex flex-col justify-end">
+                <label className={gridLabelClass}>Thời hạn (tháng)</label>
+                <input 
+                  type="number"
+                  min="1"
+                  className={inputClass}
+                  value={formData.gkdPeriod !== undefined ? formData.gkdPeriod : ''}
+                  onChange={(e) => handleGkdChange({ gkdPeriod: e.target.value ? parseInt(e.target.value) : undefined })}
+                  placeholder="Ví dụ: 12, 24, 36..."
+                />
+              </div>
+              <div className="flex flex-col justify-end">
+                <label className={gridLabelClass}>
+                  <span>Hạn Kiểm định (GKĐ)</span>
+                  <span className="text-[10px] lowercase font-normal text-emerald-600 ml-1.5">(tự tính)</span>
+                </label>
+                <input 
+                  type="date"
+                  className={`${inputClass} bg-emerald-50/50 border-emerald-200 font-bold text-emerald-900`}
+                  value={formData.expiryGKD || ''}
+                  onChange={(e) => handleGkdChange({ expiryGKD: e.target.value })}
+                />
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Kiểm xạ GKX Section */}
-        <div className="p-4 sm:p-5 bg-slate-50/70 rounded-2xl border border-slate-200/80 space-y-3">
-          <div className="text-xs font-bold text-slate-700 font-sans flex items-center justify-between">
+        <div className={`p-4 sm:p-5 rounded-2xl border transition-all space-y-3 ${
+          formData.noGKX ? 'bg-slate-100/60 border-slate-200' : 'bg-slate-50/70 border-slate-200/80'
+        }`}>
+          <div className="flex flex-wrap items-center justify-between gap-2.5 pb-1 border-b border-slate-200/60">
             <div className="flex items-center gap-2">
-              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-100 text-[10px] text-amber-700 font-bold">3</span>
-              <span className="tracking-wide">THÔNG TIN KIỂM XẠ (GKX)</span>
+              <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${
+                formData.noGKX ? 'bg-slate-200 text-slate-500' : 'bg-amber-100 text-amber-700'
+              }`}>3</span>
+              <span className={`text-xs font-bold font-sans tracking-wide ${formData.noGKX ? 'text-slate-500 line-through' : 'text-slate-700'}`}>
+                THÔNG TIN KIỂM XẠ (GKX)
+              </span>
             </div>
-            <span className="hidden sm:inline-block text-[10px] text-amber-600 font-medium bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100">
-              Đo kiểm xạ an toàn phòng & máy
-            </span>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5 sm:gap-4 items-end">
-            <div className="flex flex-col justify-end">
-              <label className={gridLabelClass}>Ngày đo kiểm xạ thực tế</label>
-              <input 
-                type="date"
-                className={inputClass}
-                value={formData.gkxIssueDate || ''}
-                onChange={(e) => handleGkxChange({ gkxIssueDate: e.target.value })}
-              />
-            </div>
-            <div className="flex flex-col justify-end">
-              <label className={gridLabelClass}>Thời hạn (tháng)</label>
-              <input 
-                type="number"
-                min="1"
-                className={inputClass}
-                value={formData.gkxPeriod !== undefined ? formData.gkxPeriod : ''}
-                onChange={(e) => handleGkxChange({ gkxPeriod: e.target.value ? parseInt(e.target.value) : undefined })}
-                placeholder="Ví dụ: 12, 24, 36..."
-              />
-            </div>
-            <div className="flex flex-col justify-end">
-              <label className={gridLabelClass}>
-                <span>Hạn Kiểm xạ (GKX)</span>
-                <span className="text-[10px] lowercase font-normal text-amber-600 ml-1.5">(tự tính)</span>
-              </label>
-              <input 
-                type="date"
-                className={`${inputClass} bg-amber-50/50 border-amber-200 font-bold text-amber-900`}
-                value={formData.expiryGKX || ''}
-                onChange={(e) => handleGkxChange({ expiryGKX: e.target.value })}
-              />
+
+            <div className="flex items-center gap-2.5">
+              <span className="hidden sm:inline-block text-[10px] text-amber-600 font-medium bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100">
+                Đo kiểm xạ an toàn phòng & máy
+              </span>
+              
+              {/* Nút bật/tắt tùy chọn không cần Kiểm xạ */}
+              <button
+                type="button"
+                onClick={() => {
+                  const nextVal = !formData.noGKX;
+                  setFormData(prev => ({
+                    ...prev,
+                    noGKX: nextVal,
+                    ...(nextVal ? { expiryGKX: '', gkxIssueDate: '', gkxPeriod: undefined } : {})
+                  }));
+                }}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] font-bold cursor-pointer transition-all select-none ${
+                  formData.noGKX
+                    ? 'bg-slate-200/80 border-slate-300 text-slate-600 hover:bg-slate-300'
+                    : 'bg-amber-600 border-amber-600 text-white shadow-xs hover:bg-amber-700'
+                }`}
+                title={formData.noGKX ? 'Nhấn để BẬT lại yêu cầu Đo kiểm xạ' : 'Nhấn để TẮT nếu máy không phát tia X hoặc không cần kiểm xạ'}
+              >
+                <span className={`w-2 h-2 rounded-full ${formData.noGKX ? 'bg-slate-400' : 'bg-white'}`}></span>
+                <span>{formData.noGKX ? 'Đã tắt (Không áp dụng)' : 'Bật (Áp dụng GKX)'}</span>
+              </button>
             </div>
           </div>
+
+          {formData.noGKX ? (
+            <div className="py-2.5 px-3.5 bg-white/80 rounded-xl border border-dashed border-slate-200 flex items-center justify-between text-xs text-slate-500">
+              <span className="flex items-center gap-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-slate-400 shrink-0"></span>
+                <span>Thiết bị được thiết lập <strong>Không áp dụng Đo kiểm xạ (GKX)</strong> (máy không phát tia xạ). Cột GKX trong danh sách sẽ được để trống và không gửi cảnh báo quá hạn.</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setFormData(prev => ({ ...prev, noGKX: false }))}
+                className="text-amber-600 hover:text-amber-700 font-bold underline ml-2 shrink-0 cursor-pointer text-[11px]"
+              >
+                Bật lại
+              </button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5 sm:gap-4 items-end">
+              <div className="flex flex-col justify-end">
+                <label className={gridLabelClass}>Ngày đo kiểm xạ thực tế</label>
+                <input 
+                  type="date"
+                  className={inputClass}
+                  value={formData.gkxIssueDate || ''}
+                  onChange={(e) => handleGkxChange({ gkxIssueDate: e.target.value })}
+                />
+              </div>
+              <div className="flex flex-col justify-end">
+                <label className={gridLabelClass}>Thời hạn (tháng)</label>
+                <input 
+                  type="number"
+                  min="1"
+                  className={inputClass}
+                  value={formData.gkxPeriod !== undefined ? formData.gkxPeriod : ''}
+                  onChange={(e) => handleGkxChange({ gkxPeriod: e.target.value ? parseInt(e.target.value) : undefined })}
+                  placeholder="Ví dụ: 12, 24, 36..."
+                />
+              </div>
+              <div className="flex flex-col justify-end">
+                <label className={gridLabelClass}>
+                  <span>Hạn Kiểm xạ (GKX)</span>
+                  <span className="text-[10px] lowercase font-normal text-amber-600 ml-1.5">(tự tính)</span>
+                </label>
+                <input 
+                  type="date"
+                  className={`${inputClass} bg-amber-50/50 border-amber-200 font-bold text-amber-900`}
+                  value={formData.expiryGKX || ''}
+                  onChange={(e) => handleGkxChange({ expiryGKX: e.target.value })}
+                />
+              </div>
+            </div>
+          )}
         </div>
 
         {/* 3. BẢO TRÌ & GHI CHÚ */}
@@ -3498,9 +3673,9 @@ const DeviceRowV2 = ({ device, onConfirm, onDelete, onEdit, onShowHistory, onSho
     }
   }, [showMenu]);
 
-  const gcpDays = getDaysRemaining(device.expiryGCP);
-  const gkdDays = getDaysRemaining(device.expiryGKD);
-  const gkxDays = getDaysRemaining(device.expiryGKX);
+  const gcpDays = device.noGCP ? null : getDaysRemaining(device.expiryGCP);
+  const gkdDays = device.noGKD ? null : getDaysRemaining(device.expiryGKD);
+  const gkxDays = device.noGKX ? null : getDaysRemaining(device.expiryGKX);
 
   const getDayBadge = (days: number | null, warningDays: number) => {
     if (days === null) return null;
@@ -3522,6 +3697,25 @@ const DeviceRowV2 = ({ device, onConfirm, onDelete, onEdit, onShowHistory, onSho
   };
 
   const DateCell = ({ label, date, days, type, warningDays }: { label: string, date: string, days: number | null, type: 'GCP' | 'GKD' | 'GKX', warningDays: number }) => {
+    const isNotApplicable = 
+      (type === 'GCP' && device.noGCP) || 
+      (type === 'GKD' && device.noGKD) || 
+      (type === 'GKX' && device.noGKX);
+
+    if (isNotApplicable) {
+      return (
+        <div className="group/cell relative select-none min-h-[32px] flex items-center">
+          <button 
+            onClick={() => onEdit(device)}
+            className="opacity-0 group-hover/cell:opacity-100 transition-opacity p-1 hover:bg-slate-100 rounded text-slate-300 hover:text-slate-600 cursor-pointer"
+            title="Chỉnh sửa cấu hình thiết bị"
+          >
+            <Pencil size={12} />
+          </button>
+        </div>
+      );
+    }
+
     const [issueDate, setIssueDate] = useState(
       type === 'GCP' ? (device.gcpIssueDate || '') : 
       type === 'GKD' ? (device.gkdIssueDate || '') : 
@@ -3978,7 +4172,8 @@ const ScheduleManagementPanel = ({
   // Helper to extract milestone info for a device and type
   const getMilestoneInfo = (device: Device, type: 'GCP' | 'GKD' | 'GKX' | 'BD') => {
     if (type === 'GCP') {
-      const days = getDaysRemaining(device.expiryGCP);
+      const isNA = !!device.noGCP;
+      const days = isNA ? null : getDaysRemaining(device.expiryGCP);
       const isExpired = days !== null && days < 0;
       const isWarning = days !== null && days >= 0 && days <= warningDaysGCP;
       const isOk = days !== null && days > warningDaysGCP;
@@ -3991,13 +4186,14 @@ const ScheduleManagementPanel = ({
         targetDate: device.expiryGCP,
         days,
         warningDays: warningDaysGCP,
-        status: isExpired ? 'expired' : isWarning ? 'warning' : isOk ? 'ok' : 'unset',
+        status: isNA ? 'not_applicable' : (isExpired ? 'expired' : isWarning ? 'warning' : isOk ? 'ok' : 'unset'),
         icon: <FileCheck size={18} className="text-blue-500" />,
         badgeColor: 'bg-blue-50 text-blue-700 border-blue-200'
       };
     }
     if (type === 'GKD') {
-      const days = getDaysRemaining(device.expiryGKD);
+      const isNA = !!device.noGKD;
+      const days = isNA ? null : getDaysRemaining(device.expiryGKD);
       const isExpired = days !== null && days < 0;
       const isWarning = days !== null && days >= 0 && days <= warningDaysGKD;
       const isOk = days !== null && days > warningDaysGKD;
@@ -4010,13 +4206,14 @@ const ScheduleManagementPanel = ({
         targetDate: device.expiryGKD,
         days,
         warningDays: warningDaysGKD,
-        status: isExpired ? 'expired' : isWarning ? 'warning' : isOk ? 'ok' : 'unset',
+        status: isNA ? 'not_applicable' : (isExpired ? 'expired' : isWarning ? 'warning' : isOk ? 'ok' : 'unset'),
         icon: <ShieldCheck size={18} className="text-indigo-500" />,
         badgeColor: 'bg-indigo-50 text-indigo-700 border-indigo-200'
       };
     }
     if (type === 'GKX') {
-      const days = getDaysRemaining(device.expiryGKX);
+      const isNA = !!device.noGKX;
+      const days = isNA ? null : getDaysRemaining(device.expiryGKX);
       const isExpired = days !== null && days < 0;
       const isWarning = days !== null && days >= 0 && days <= warningDaysGKX;
       const isOk = days !== null && days > warningDaysGKX;
@@ -4029,7 +4226,7 @@ const ScheduleManagementPanel = ({
         targetDate: device.expiryGKX,
         days,
         warningDays: warningDaysGKX,
-        status: isExpired ? 'expired' : isWarning ? 'warning' : isOk ? 'ok' : 'unset',
+        status: isNA ? 'not_applicable' : (isExpired ? 'expired' : isWarning ? 'warning' : isOk ? 'ok' : 'unset'),
         icon: <Radio size={18} className="text-amber-500" />,
         badgeColor: 'bg-amber-50 text-amber-700 border-amber-200'
       };
@@ -4074,23 +4271,29 @@ const ScheduleManagementPanel = ({
     }> = [];
 
     if (currentSubTab === 'gcp') {
-      items = devices.map(d => ({
-        device: d,
-        key: `${d.id}-gcp`,
-        info: getMilestoneInfo(d, 'GCP')
-      }));
+      items = devices
+        .filter(d => !d.noGCP)
+        .map(d => ({
+          device: d,
+          key: `${d.id}-gcp`,
+          info: getMilestoneInfo(d, 'GCP')
+        }));
     } else if (currentSubTab === 'gkd') {
-      items = devices.map(d => ({
-        device: d,
-        key: `${d.id}-gkd`,
-        info: getMilestoneInfo(d, 'GKD')
-      }));
+      items = devices
+        .filter(d => !d.noGKD)
+        .map(d => ({
+          device: d,
+          key: `${d.id}-gkd`,
+          info: getMilestoneInfo(d, 'GKD')
+        }));
     } else if (currentSubTab === 'gkx') {
-      items = devices.map(d => ({
-        device: d,
-        key: `${d.id}-gkx`,
-        info: getMilestoneInfo(d, 'GKX')
-      }));
+      items = devices
+        .filter(d => !d.noGKX)
+        .map(d => ({
+          device: d,
+          key: `${d.id}-gkx`,
+          info: getMilestoneInfo(d, 'GKX')
+        }));
     } else if (currentSubTab === 'bd') {
       items = devices.map(d => ({
         device: d,
@@ -4098,11 +4301,11 @@ const ScheduleManagementPanel = ({
         info: getMilestoneInfo(d, 'BD')
       }));
     } else {
-      // 'all': combine all 4 milestones
+      // 'all': combine all applicable milestones
       devices.forEach(d => {
-        items.push({ device: d, key: `${d.id}-gcp`, info: getMilestoneInfo(d, 'GCP') });
-        items.push({ device: d, key: `${d.id}-gkd`, info: getMilestoneInfo(d, 'GKD') });
-        items.push({ device: d, key: `${d.id}-gkx`, info: getMilestoneInfo(d, 'GKX') });
+        if (!d.noGCP) items.push({ device: d, key: `${d.id}-gcp`, info: getMilestoneInfo(d, 'GCP') });
+        if (!d.noGKD) items.push({ device: d, key: `${d.id}-gkd`, info: getMilestoneInfo(d, 'GKD') });
+        if (!d.noGKX) items.push({ device: d, key: `${d.id}-gkx`, info: getMilestoneInfo(d, 'GKX') });
         items.push({ device: d, key: `${d.id}-bd`, info: getMilestoneInfo(d, 'BD') });
       });
     }
