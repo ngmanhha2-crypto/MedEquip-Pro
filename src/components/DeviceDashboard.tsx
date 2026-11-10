@@ -1977,47 +1977,72 @@ const DeviceDashboard: React.FC = () => {
 
   return (
     <div className="flex flex-col h-screen bg-slate-50/70 font-sans text-slate-900 w-full overflow-hidden">
-      {/* 1. TOP HEADER BAR: Brand, Search, Alert Pill, Actions, Profile */}
-      <header className="bg-white border-b border-slate-200 px-4 sm:px-6 lg:px-8 py-3 shrink-0 flex items-center justify-between gap-4 z-20 shadow-xs">
+      {/* 1. TOP HEADER BANNER: High-End Medical Clinical Banner */}
+      <header className="bg-gradient-to-r from-slate-950 via-[#0b162c] to-[#0f1f3d] border-b border-slate-800 px-4 sm:px-6 lg:px-8 py-3.5 shrink-0 flex items-center justify-between gap-4 z-20 shadow-md relative overflow-hidden">
+        {/* Ambient Glows & Medical Grid Texture */}
+        <div className="pointer-events-none absolute -top-12 -left-12 w-72 h-72 bg-blue-500/15 rounded-full blur-3xl" />
+        <div className="pointer-events-none absolute -top-12 -right-12 w-72 h-72 bg-indigo-500/10 rounded-full blur-3xl" />
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(#38bdf8_1px,transparent_1px)] [background-size:24px_24px] opacity-5" />
+
         {/* Brand & Department Badge */}
-        <div className="flex items-center gap-3 shrink-0">
-          <img 
-            src="/logo.svg" 
-            alt="MedEquip Pro Logo" 
-            className="w-9 h-9 rounded-xl shadow-sm shadow-blue-500/20 object-contain" 
-          />
+        <div className="flex items-center gap-3.5 shrink-0 relative z-10">
+          <div className="relative group">
+            <div className="absolute -inset-0.5 bg-gradient-to-r from-blue-500 to-cyan-400 rounded-2xl blur-xs opacity-50 group-hover:opacity-80 transition duration-300"></div>
+            <img 
+              src="/logo.svg" 
+              alt="MedEquip Pro Logo" 
+              className="relative w-10 h-10 sm:w-11 sm:h-11 rounded-xl shadow-md object-contain bg-slate-900/90 p-0.5 ring-1 ring-white/20" 
+            />
+          </div>
           <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-base font-bold tracking-tight text-slate-900 leading-none">
-                MedEquip <span className="text-blue-600 font-bold">Pro</span>
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <h1 className="text-base sm:text-lg font-black tracking-tight text-white leading-none flex items-center gap-1.5">
+                <span>MedEquip</span>
+                <span className="bg-gradient-to-r from-sky-400 via-blue-400 to-indigo-300 bg-clip-text text-transparent font-black tracking-wide">
+                  PRO
+                </span>
               </h1>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200 uppercase tracking-wider">
+              <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-blue-500/20 text-sky-300 border border-blue-400/30 uppercase tracking-wider backdrop-blur-xs shadow-xs">
                 Phòng X-Quang
               </span>
             </div>
-            <p className="text-[10px] text-slate-400 font-medium mt-0.5 hidden sm:block">
-              Hệ thống quản lý thiết bị, kiểm định & bảo trì y tế
+            <p className="text-[11px] text-slate-300/85 font-medium mt-1 hidden sm:flex items-center gap-2 tracking-tight">
+              <span>Hệ thống Quản lý Thiết bị Y tế, Kiểm định & An toàn Bức xạ</span>
+              <span className="w-1 h-1 rounded-full bg-slate-500 hidden xl:inline-block"></span>
+              <span className="text-slate-400 text-[10px] font-mono hidden xl:inline-block uppercase tracking-wider">
+                Khoa Chẩn Đoán Hình Ảnh
+              </span>
             </p>
           </div>
         </div>
 
         {/* Global Live Search Bar */}
-        <div className="flex-1 max-w-xl mx-2 relative hidden md:block">
-          <div className="relative">
-            <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400">
-              <Search size={16} />
+        <div className="flex-1 min-w-[220px] max-w-md mx-2 sm:mx-4 relative hidden md:block z-10">
+          <div className="relative flex items-center">
+            <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-sky-400 z-10 pointer-events-none flex items-center">
+              <Search size={15} />
             </span>
             <input 
               type="text" 
-              placeholder="Tìm kiếm thiết bị (tên máy, model, hãng, số serial, người quản lý...)" 
-              className="w-full pl-10 pr-4 py-2 bg-slate-100 hover:bg-slate-100/80 focus:bg-white border border-slate-200/60 focus:border-blue-500 rounded-xl text-xs sm:text-sm focus:ring-2 focus:ring-blue-100 outline-none transition-all placeholder:text-slate-400 font-sans"
+              placeholder="Tìm nhanh thiết bị (tên, model, serial...)" 
+              className="w-full pl-9 pr-8 py-2 bg-slate-900/90 hover:bg-slate-900 focus:bg-slate-950 border border-slate-700/80 focus:border-sky-400 rounded-xl text-xs sm:text-sm text-white focus:ring-2 focus:ring-sky-500/30 outline-none transition-all placeholder:text-slate-400 font-sans shadow-inner backdrop-blur-xs"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               onFocus={() => setIsSearchFocused(true)}
               onBlur={() => setTimeout(() => setIsSearchFocused(false), 200)}
             />
+            {searchTerm && (
+              <button
+                type="button"
+                onClick={() => setSearchTerm('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white p-1 rounded-md transition-colors z-10 cursor-pointer"
+                title="Xóa nội dung tìm kiếm"
+              >
+                <X size={13} />
+              </button>
+            )}
             {isSearchFocused && matchingSuggestions.length > 0 && (
-              <div className="absolute left-0 right-0 mt-2 max-h-96 overflow-y-auto bg-white border border-slate-200/80 rounded-2xl shadow-2xl z-50 p-3 divide-y divide-slate-100 animate-in fade-in slide-in-from-top-2 duration-150">
+              <div className="absolute left-0 right-0 top-full mt-2 max-h-96 overflow-y-auto bg-slate-900/98 backdrop-blur-md border border-slate-700 rounded-2xl shadow-2xl z-50 p-3 divide-y divide-slate-800 animate-in fade-in slide-in-from-top-2 duration-150 text-slate-200">
                 <div className="px-3 py-1.5 text-slate-400 text-[10px] font-bold uppercase tracking-wider">
                   Gợi ý thiết bị phù hợp ({matchingSuggestions.length})
                 </div>
@@ -2031,28 +2056,28 @@ const DeviceDashboard: React.FC = () => {
                         setIsModalOpen(true);
                         setSearchTerm('');
                       }}
-                      className="w-full text-left p-2.5 hover:bg-slate-50 rounded-xl transition-all flex flex-col gap-1 cursor-pointer focus:bg-slate-50 outline-none group"
+                      className="w-full text-left p-2.5 hover:bg-slate-800/90 rounded-xl transition-all flex flex-col gap-1 cursor-pointer focus:bg-slate-800 outline-none group"
                     >
                       <div className="flex items-center justify-between w-full">
-                        <span className="font-bold text-slate-800 text-sm group-hover:text-blue-600 transition-colors leading-snug">
+                        <span className="font-bold text-white text-sm group-hover:text-sky-300 transition-colors leading-snug">
                           {device.name}
                         </span>
-                        <span className="text-[9px] font-mono bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-bold uppercase shrink-0 ml-2">
+                        <span className="text-[9px] font-mono bg-slate-800 text-sky-300 border border-slate-700 px-1.5 py-0.5 rounded font-bold uppercase shrink-0 ml-2">
                           S/N: {device.serialNumber || 'N/A'}
                         </span>
                       </div>
-                      <div className="flex flex-wrap items-center gap-x-1.5 text-[11px] text-slate-500 leading-none">
-                        <span>Model: <strong className="text-slate-700 font-medium font-sans">{device.model || 'Chưa rõ'}</strong></span>
+                      <div className="flex flex-wrap items-center gap-x-1.5 text-[11px] text-slate-400 leading-none">
+                        <span>Model: <strong className="text-slate-300 font-medium font-sans">{device.model || 'Chưa rõ'}</strong></span>
                         {device.manufacturer && (
                           <>
-                            <span className="text-slate-300">•</span>
-                            <span>Hãng: <strong className="text-slate-700 font-medium font-sans">{device.manufacturer}</strong></span>
+                            <span className="text-slate-600">•</span>
+                            <span>Hãng: <strong className="text-slate-300 font-medium font-sans">{device.manufacturer}</strong></span>
                           </>
                         )}
                         {device.origin && (
                           <>
-                            <span className="text-slate-300">•</span>
-                            <span>Xuất xứ: <strong className="text-slate-600 font-medium font-sans">{device.origin}</strong></span>
+                            <span className="text-slate-600">•</span>
+                            <span>Xuất xứ: <strong className="text-slate-400 font-medium font-sans">{device.origin}</strong></span>
                           </>
                         )}
                       </div>
@@ -2065,7 +2090,7 @@ const DeviceDashboard: React.FC = () => {
         </div>
 
         {/* Action CTAs, Quick Alert & Profile */}
-        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+        <div className="flex items-center gap-2 sm:gap-3 shrink-0 relative z-10">
           {/* Quick Alert Notification Chip */}
           {stats.expired > 0 ? (
             <button
@@ -2073,10 +2098,10 @@ const DeviceDashboard: React.FC = () => {
                 setActiveTab('inventory');
                 setFilterStatus('expired');
               }}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-xs font-bold transition-all shadow-xs cursor-pointer animate-pulse"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/40 text-xs font-bold transition-all shadow-lg shadow-red-950/40 cursor-pointer animate-pulse backdrop-blur-xs"
               title="Nhấn để xem ngay danh sách thiết bị quá hạn"
             >
-              <AlertTriangle size={14} className="text-red-600 shrink-0" />
+              <AlertTriangle size={14} className="text-red-400 shrink-0" />
               <span>{stats.expired} Quá hạn</span>
             </button>
           ) : stats.warning > 0 ? (
@@ -2085,10 +2110,10 @@ const DeviceDashboard: React.FC = () => {
                 setActiveTab('inventory');
                 setFilterStatus('warning');
               }}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-orange-50 hover:bg-orange-100 text-orange-700 border border-orange-200 text-xs font-bold transition-all shadow-xs cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs font-bold transition-all shadow-lg shadow-amber-950/40 cursor-pointer backdrop-blur-xs"
               title="Nhấn để xem các thiết bị cận hạn"
             >
-              <Clock size={14} className="text-orange-600 shrink-0" />
+              <Clock size={14} className="text-amber-400 shrink-0" />
               <span>{stats.warning} Cận hạn</span>
             </button>
           ) : null}
@@ -2105,20 +2130,20 @@ const DeviceDashboard: React.FC = () => {
           <button 
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            className="hidden md:flex items-center gap-1.5 px-3 py-2 border border-slate-200 rounded-xl text-xs sm:text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer bg-white shadow-xs"
+            className="hidden md:flex items-center gap-1.5 px-3 py-2 bg-slate-900/80 hover:bg-slate-800 text-slate-200 hover:text-white border border-slate-700/80 hover:border-slate-600 rounded-xl text-xs sm:text-sm font-semibold transition-all cursor-pointer shadow-sm backdrop-blur-xs"
             title="Nhập danh sách thiết bị từ file Excel (.xlsx)"
           >
-            <Upload size={15} />
+            <Upload size={15} className="text-slate-400" />
             <span>Nhập Excel</span>
           </button>
 
           <button 
             type="button"
             onClick={handleExportExcel}
-            className="flex items-center gap-1.5 px-3 py-2 border border-slate-200 rounded-xl text-xs sm:text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer bg-white shadow-xs"
+            className="flex items-center gap-1.5 px-3 py-2 bg-slate-900/80 hover:bg-slate-800 text-slate-200 hover:text-white border border-slate-700/80 hover:border-slate-600 rounded-xl text-xs sm:text-sm font-semibold transition-all cursor-pointer shadow-sm backdrop-blur-xs"
             title={devices.length > 0 ? "Xuất bảng thiết bị ra file Excel" : "Tải file mẫu Excel chuẩn để nhập dữ liệu"}
           >
-            <Download size={15} />
+            <Download size={15} className="text-slate-400" />
             <span className="hidden sm:inline">{devices.length > 0 ? "Xuất Excel" : "Mẫu Excel"}</span>
           </button>
 
@@ -2128,19 +2153,19 @@ const DeviceDashboard: React.FC = () => {
               setEditingDevice(null);
               setIsModalOpen(true);
             }}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold shadow-md shadow-blue-500/20 transition-all font-sans cursor-pointer inline-flex items-center gap-1.5"
+            className="bg-gradient-to-r from-blue-600 via-blue-500 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white px-3.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-bold shadow-lg shadow-blue-500/30 hover:shadow-blue-500/45 transition-all font-sans cursor-pointer inline-flex items-center gap-1.5 ring-1 ring-white/20 active:scale-95"
           >
             <Plus size={16} />
             <span>Thêm thiết bị</span>
           </button>
 
           {/* User Account Profile */}
-          <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 pl-2 pr-1.5 py-1 rounded-xl">
-            <div className="w-7 h-7 bg-blue-600 text-white rounded-lg flex items-center justify-center font-bold text-xs uppercase shadow-xs shrink-0">
+          <div className="flex items-center gap-2 bg-slate-900/80 border border-slate-700/80 pl-2 pr-1.5 py-1 rounded-xl backdrop-blur-xs shadow-sm">
+            <div className="w-7 h-7 bg-gradient-to-br from-blue-500 to-indigo-600 text-white rounded-lg flex items-center justify-center font-bold text-xs uppercase shadow-sm ring-1 ring-white/20 shrink-0">
               {appUser?.email?.charAt(0).toUpperCase() || 'U'}
             </div>
             <div className="text-left hidden xl:block">
-              <div className="text-xs font-bold text-slate-800 line-clamp-1 max-w-[110px] leading-tight">
+              <div className="text-xs font-bold text-slate-200 line-clamp-1 max-w-[110px] leading-tight">
                 Quản trị viên
               </div>
               <div className="text-[10px] text-slate-400 font-mono line-clamp-1 max-w-[115px] leading-none mt-0.5">
@@ -2149,7 +2174,7 @@ const DeviceDashboard: React.FC = () => {
             </div>
             <button
               onClick={handleSignOutSystem}
-              className="p-1.5 text-slate-400 hover:text-red-500 rounded-lg hover:bg-slate-200/60 transition-colors cursor-pointer"
+              className="p-1.5 text-slate-400 hover:text-red-400 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
               title="Đăng xuất khỏi hệ thống"
             >
               <LogOut size={14} />
@@ -2257,7 +2282,7 @@ const DeviceDashboard: React.FC = () => {
               {/* Filtering & Table Container - Clean Full Height Table */}
               <div className="flex-1 bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col min-h-0 overflow-hidden">
                 {/* Table Header / Filter Bar */}
-                <div className="px-5 py-3.5 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3 bg-slate-50/50">
+                <div className="px-5 py-3 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3 bg-slate-50/50">
                   <div className="flex flex-wrap items-center gap-2">
                     <Filter size={14} className="text-slate-400 mr-1" />
                     <FilterButton active={filterStatus === 'all'} onClick={() => setFilterStatus('all')} label={`Tất cả (${stats.total})`} />
@@ -2266,8 +2291,30 @@ const DeviceDashboard: React.FC = () => {
                     <FilterButton active={filterStatus === 'ok'} onClick={() => setFilterStatus('ok')} label={`Hợp lệ (${stats.ok})`} />
                   </div>
                   
-                  <div className="text-xs text-slate-500 font-semibold font-mono uppercase tracking-wider">
-                    Hiển thị {filteredDevices.length} / {devices.length} Thiết bị
+                  <div className="flex items-center gap-3">
+                    <div className="relative min-w-[170px] sm:min-w-[210px]">
+                      <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                      <input
+                        type="text"
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        placeholder="Tìm trong danh sách..."
+                        className="w-full pl-8 pr-7 py-1 text-xs bg-white border border-slate-200 rounded-lg text-slate-700 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 shadow-xs"
+                      />
+                      {searchTerm && (
+                        <button
+                          type="button"
+                          onClick={() => setSearchTerm('')}
+                          className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
+                          title="Xóa tìm kiếm"
+                        >
+                          <X size={12} />
+                        </button>
+                      )}
+                    </div>
+                    <div className="text-xs text-slate-500 font-semibold font-mono uppercase tracking-wider whitespace-nowrap">
+                      {filteredDevices.length} / {devices.length} Thiết bị
+                    </div>
                   </div>
                 </div>
 
