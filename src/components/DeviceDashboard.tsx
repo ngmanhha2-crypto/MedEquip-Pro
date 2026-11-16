@@ -50,9 +50,17 @@ import {
   Wrench,
   FileCheck,
   CalendarDays,
-  CalendarClock
+  CalendarClock,
+  FileSpreadsheet
 } from 'lucide-react';
 import { DeviceStatsCharts } from './DeviceStatsCharts';
+import { 
+  HospitalLogoViewer, 
+  HospitalLogoSettingsSection, 
+  HospitalLogoConfig, 
+  DEFAULT_LOGO_CONFIG 
+} from './HospitalLogoManager';
+import { DeviceExcelImport } from './DeviceExcelImport';
 import { MOCK_DEVICES } from '../mockData';
 import { Device, DeviceNote, ActivityLog } from '../types';
 import { getDaysRemaining, getStatusColor, formatDisplayDate, checkReminders, calculateExpiryFromIssue } from '../utils/dateUtils';
@@ -121,6 +129,7 @@ const DeviceDashboard: React.FC = () => {
   const [filterStatus, setFilterStatus] = useState<'all' | 'expired' | 'warning' | 'ok'>('all');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingDevice, setEditingDevice] = useState<Device | null>(null);
+  const [addDeviceMode, setAddDeviceMode] = useState<'form' | 'excel'>('form');
   const [selectedHistoryDevice, setSelectedHistoryDevice] = useState<Device | null>(null);
   const [selectedNoteDevice, setSelectedNoteDevice] = useState<Device | null>(null);
   const [activeTab, setActiveTab] = useState<'inventory' | 'charts' | 'maintenance' | 'legal' | 'settings'>('inventory');
@@ -143,6 +152,31 @@ const DeviceDashboard: React.FC = () => {
     const val = localStorage.getItem('medequip_warning_days_bd');
     return val ? parseInt(val) : 30;
   });
+
+  // Hospital Facility Identity & Logo configuration
+  const [hospitalLogoConfig, setHospitalLogoConfig] = useState<HospitalLogoConfig>(() => {
+    try {
+      const saved = localStorage.getItem('medequip_hospital_logo_config');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {
+      console.error('Error loading hospital logo config:', e);
+    }
+    return DEFAULT_LOGO_CONFIG;
+  });
+
+  const handleSaveHospitalLogoConfig = (newConfig?: HospitalLogoConfig) => {
+    const configToSave = newConfig || hospitalLogoConfig;
+    setHospitalLogoConfig(configToSave);
+    try {
+      localStorage.setItem('medequip_hospital_logo_config', JSON.stringify(configToSave));
+    } catch (e) {
+      console.error('Error saving logo to localStorage:', e);
+    }
+    setToastNotification({
+      type: 'success',
+      message: 'Đã lưu cấu hình nhận diện & Logo Bệnh viện thành công!'
+    });
+  };
 
   // Calculate urgent items count across the 4 schedule categories
   const scheduleCounts = useMemo(() => {
@@ -1770,13 +1804,18 @@ const DeviceDashboard: React.FC = () => {
           className="w-full max-w-md bg-white border border-slate-100 rounded-3xl shadow-xl overflow-hidden p-8 z-10"
         >
           <div className="text-center mb-6">
-            <img 
-              src="/logo.svg" 
-              alt="MedEquip Pro Logo" 
-              className="mx-auto w-14 h-14 rounded-2xl shadow-lg shadow-blue-500/25 mb-3 object-contain" 
-            />
-            <h1 className="text-2xl font-black text-slate-900 tracking-tight leading-tight">MedEquip Pro</h1>
-            <p className="text-xs text-slate-500 mt-1 font-medium">Hệ thống Quản lý Thiết bị Y tế & X-Quang</p>
+            <div className="mx-auto w-14 h-14 mb-3 flex items-center justify-center">
+              <HospitalLogoViewer 
+                config={hospitalLogoConfig} 
+                sizeClass="w-14 h-14" 
+              />
+            </div>
+            <h1 className="text-2xl font-black text-slate-900 tracking-tight leading-tight">
+              {hospitalLogoConfig.hospitalName || 'MedEquip Pro'}
+            </h1>
+            <p className="text-xs text-slate-500 mt-1 font-medium">
+              {hospitalLogoConfig.departmentName ? `Hệ thống Quản lý Thiết bị Y tế • ${hospitalLogoConfig.departmentName}` : 'Hệ thống Quản lý Thiết bị Y tế & X-Quang'}
+            </p>
           </div>
 
           {/* Quick Google Sign-In */}
@@ -1978,38 +2017,39 @@ const DeviceDashboard: React.FC = () => {
   return (
     <div className="flex flex-col h-screen bg-slate-50/70 font-sans text-slate-900 w-full overflow-hidden">
       {/* 1. TOP HEADER BANNER: High-End Medical Clinical Banner */}
-      <header className="bg-gradient-to-r from-slate-950 via-[#0b162c] to-[#0f1f3d] border-b border-slate-800 px-4 sm:px-6 lg:px-8 py-3.5 shrink-0 flex items-center justify-between gap-4 z-20 shadow-md relative overflow-hidden">
+      <header className="bg-gradient-to-r from-slate-950 via-[#0b162c] to-[#0f1f3d] border-b border-slate-800 px-3 sm:px-6 lg:px-8 py-2.5 sm:py-3 shrink-0 flex items-center justify-between gap-3 sm:gap-4 z-20 shadow-md relative overflow-hidden">
         {/* Ambient Glows & Medical Grid Texture */}
         <div className="pointer-events-none absolute -top-12 -left-12 w-72 h-72 bg-blue-500/15 rounded-full blur-3xl" />
         <div className="pointer-events-none absolute -top-12 -right-12 w-72 h-72 bg-indigo-500/10 rounded-full blur-3xl" />
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(#38bdf8_1px,transparent_1px)] [background-size:24px_24px] opacity-5" />
 
         {/* Brand & Department Badge */}
-        <div className="flex items-center gap-3.5 shrink-0 relative z-10">
-          <div className="relative group">
-            <div className="absolute -inset-0.5 bg-gradient-to-r from-blue-500 to-cyan-400 rounded-2xl blur-xs opacity-50 group-hover:opacity-80 transition duration-300"></div>
-            <img 
-              src="/logo.svg" 
-              alt="MedEquip Pro Logo" 
-              className="relative w-10 h-10 sm:w-11 sm:h-11 rounded-xl shadow-md object-contain bg-slate-900/90 p-0.5 ring-1 ring-white/20" 
+        <div className="flex items-center gap-2.5 sm:gap-3.5 shrink-0 relative z-10">
+          <button 
+            type="button"
+            onClick={() => setActiveTab('settings')}
+            className="relative group text-left cursor-pointer focus:outline-none"
+            title="Nhấn để đổi Logo hoặc cài đặt thông tin Bệnh viện trong mục Cài đặt"
+          >
+            <div className="absolute -inset-0.5 bg-gradient-to-r from-blue-500 to-cyan-400 rounded-2xl blur-xs opacity-50 group-hover:opacity-85 transition duration-300"></div>
+            <HospitalLogoViewer 
+              config={hospitalLogoConfig} 
+              sizeClass="relative w-9 h-9 sm:w-10 sm:h-10" 
             />
-          </div>
+          </button>
           <div>
-            <div className="flex items-center gap-2.5 flex-wrap">
-              <h1 className="text-base sm:text-lg font-black tracking-tight text-white leading-none flex items-center gap-1.5">
-                <span>MedEquip</span>
-                <span className="bg-gradient-to-r from-sky-400 via-blue-400 to-indigo-300 bg-clip-text text-transparent font-black tracking-wide">
-                  PRO
-                </span>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-sm sm:text-base lg:text-lg font-black tracking-tight text-white leading-none flex items-center gap-1.5 whitespace-nowrap">
+                <span>{hospitalLogoConfig.hospitalName || 'MedEquip Pro'}</span>
               </h1>
-              <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-blue-500/20 text-sky-300 border border-blue-400/30 uppercase tracking-wider backdrop-blur-xs shadow-xs">
-                Phòng X-Quang
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500/20 text-sky-300 border border-blue-400/30 uppercase tracking-wider backdrop-blur-xs shadow-xs shrink-0 whitespace-nowrap">
+                {hospitalLogoConfig.departmentName || 'Phòng X-Quang'}
               </span>
             </div>
-            <p className="text-[11px] text-slate-300/85 font-medium mt-1 hidden sm:flex items-center gap-2 tracking-tight">
+            <p className="text-[11px] text-slate-300/80 font-medium mt-1 hidden 2xl:flex items-center gap-2 tracking-tight">
               <span>Hệ thống Quản lý Thiết bị Y tế, Kiểm định & An toàn Bức xạ</span>
-              <span className="w-1 h-1 rounded-full bg-slate-500 hidden xl:inline-block"></span>
-              <span className="text-slate-400 text-[10px] font-mono hidden xl:inline-block uppercase tracking-wider">
+              <span className="w-1 h-1 rounded-full bg-slate-500"></span>
+              <span className="text-slate-400 text-[10px] font-mono uppercase tracking-wider">
                 Khoa Chẩn Đoán Hình Ảnh
               </span>
             </p>
@@ -2017,15 +2057,15 @@ const DeviceDashboard: React.FC = () => {
         </div>
 
         {/* Global Live Search Bar */}
-        <div className="flex-1 min-w-[220px] max-w-md mx-2 sm:mx-4 relative hidden md:block z-10">
+        <div className="flex-1 min-w-[160px] max-w-sm xl:max-w-md mx-2 sm:mx-3 relative hidden md:block z-10">
           <div className="relative flex items-center">
-            <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-sky-400 z-10 pointer-events-none flex items-center">
-              <Search size={15} />
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sky-400 z-10 pointer-events-none flex items-center">
+              <Search size={14} />
             </span>
             <input 
               type="text" 
-              placeholder="Tìm nhanh thiết bị (tên, model, serial...)" 
-              className="w-full pl-9 pr-8 py-2 bg-slate-900/90 hover:bg-slate-900 focus:bg-slate-950 border border-slate-700/80 focus:border-sky-400 rounded-xl text-xs sm:text-sm text-white focus:ring-2 focus:ring-sky-500/30 outline-none transition-all placeholder:text-slate-400 font-sans shadow-inner backdrop-blur-xs"
+              placeholder="Tìm kiếm thiết bị..." 
+              className="w-full pl-8 pr-7 py-1.5 bg-slate-900/90 hover:bg-slate-900 focus:bg-slate-950 border border-slate-700/80 focus:border-sky-400 rounded-xl text-xs sm:text-sm text-white focus:ring-2 focus:ring-sky-500/30 outline-none transition-all placeholder:text-slate-400 font-sans shadow-inner backdrop-blur-xs"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               onFocus={() => setIsSearchFocused(true)}
@@ -2035,10 +2075,10 @@ const DeviceDashboard: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setSearchTerm('')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white p-1 rounded-md transition-colors z-10 cursor-pointer"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white p-0.5 rounded-md transition-colors z-10 cursor-pointer"
                 title="Xóa nội dung tìm kiếm"
               >
-                <X size={13} />
+                <X size={12} />
               </button>
             )}
             {isSearchFocused && matchingSuggestions.length > 0 && (
@@ -2090,7 +2130,7 @@ const DeviceDashboard: React.FC = () => {
         </div>
 
         {/* Action CTAs, Quick Alert & Profile */}
-        <div className="flex items-center gap-2 sm:gap-3 shrink-0 relative z-10">
+        <div className="flex items-center gap-2 sm:gap-2.5 shrink-0 relative z-10">
           {/* Quick Alert Notification Chip */}
           {stats.expired > 0 ? (
             <button
@@ -2098,10 +2138,10 @@ const DeviceDashboard: React.FC = () => {
                 setActiveTab('inventory');
                 setFilterStatus('expired');
               }}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/40 text-xs font-bold transition-all shadow-lg shadow-red-950/40 cursor-pointer animate-pulse backdrop-blur-xs"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/40 text-xs font-bold transition-all shadow-md shadow-red-950/40 cursor-pointer animate-pulse whitespace-nowrap"
               title="Nhấn để xem ngay danh sách thiết bị quá hạn"
             >
-              <AlertTriangle size={14} className="text-red-400 shrink-0" />
+              <AlertTriangle size={13} className="text-red-400 shrink-0" />
               <span>{stats.expired} Quá hạn</span>
             </button>
           ) : stats.warning > 0 ? (
@@ -2110,15 +2150,15 @@ const DeviceDashboard: React.FC = () => {
                 setActiveTab('inventory');
                 setFilterStatus('warning');
               }}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs font-bold transition-all shadow-lg shadow-amber-950/40 cursor-pointer backdrop-blur-xs"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs font-bold transition-all shadow-md shadow-amber-950/40 cursor-pointer whitespace-nowrap"
               title="Nhấn để xem các thiết bị cận hạn"
             >
-              <Clock size={14} className="text-amber-400 shrink-0" />
+              <Clock size={13} className="text-amber-400 shrink-0" />
               <span>{stats.warning} Cận hạn</span>
             </button>
           ) : null}
 
-          {/* Hidden file input for Excel Import */}
+          {/* Hidden file input for Excel Import fallback */}
           <input 
             type="file" 
             ref={fileInputRef} 
@@ -2129,80 +2169,71 @@ const DeviceDashboard: React.FC = () => {
 
           <button 
             type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="hidden md:flex items-center gap-1.5 px-3 py-2 bg-slate-900/80 hover:bg-slate-800 text-slate-200 hover:text-white border border-slate-700/80 hover:border-slate-600 rounded-xl text-xs sm:text-sm font-semibold transition-all cursor-pointer shadow-sm backdrop-blur-xs"
-            title="Nhập danh sách thiết bị từ file Excel (.xlsx)"
-          >
-            <Upload size={15} className="text-slate-400" />
-            <span>Nhập Excel</span>
-          </button>
-
-          <button 
-            type="button"
             onClick={handleExportExcel}
-            className="flex items-center gap-1.5 px-3 py-2 bg-slate-900/80 hover:bg-slate-800 text-slate-200 hover:text-white border border-slate-700/80 hover:border-slate-600 rounded-xl text-xs sm:text-sm font-semibold transition-all cursor-pointer shadow-sm backdrop-blur-xs"
+            className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-slate-900/80 hover:bg-slate-800 text-slate-200 hover:text-white border border-slate-700/80 hover:border-slate-600 rounded-xl text-xs font-semibold transition-all cursor-pointer shadow-sm backdrop-blur-xs whitespace-nowrap"
             title={devices.length > 0 ? "Xuất bảng thiết bị ra file Excel" : "Tải file mẫu Excel chuẩn để nhập dữ liệu"}
           >
-            <Download size={15} className="text-slate-400" />
-            <span className="hidden sm:inline">{devices.length > 0 ? "Xuất Excel" : "Mẫu Excel"}</span>
+            <Download size={14} className="text-slate-400" />
+            <span className="hidden lg:inline">{devices.length > 0 ? "Xuất Excel" : "Mẫu Excel"}</span>
           </button>
 
           <button 
             type="button"
             onClick={() => {
               setEditingDevice(null);
+              setAddDeviceMode('form');
               setIsModalOpen(true);
             }}
-            className="bg-gradient-to-r from-blue-600 via-blue-500 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white px-3.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-bold shadow-lg shadow-blue-500/30 hover:shadow-blue-500/45 transition-all font-sans cursor-pointer inline-flex items-center gap-1.5 ring-1 ring-white/20 active:scale-95"
+            className="bg-gradient-to-r from-blue-600 via-blue-500 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white px-3 sm:px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-bold shadow-md shadow-blue-500/30 hover:shadow-blue-500/45 transition-all font-sans cursor-pointer inline-flex items-center gap-1.5 ring-1 ring-white/20 active:scale-95 whitespace-nowrap"
           >
-            <Plus size={16} />
+            <Plus size={15} />
             <span>Thêm thiết bị</span>
           </button>
 
           {/* User Account Profile */}
-          <div className="flex items-center gap-2 bg-slate-900/80 border border-slate-700/80 pl-2 pr-1.5 py-1 rounded-xl backdrop-blur-xs shadow-sm">
-            <div className="w-7 h-7 bg-gradient-to-br from-blue-500 to-indigo-600 text-white rounded-lg flex items-center justify-center font-bold text-xs uppercase shadow-sm ring-1 ring-white/20 shrink-0">
+          <div className="flex items-center gap-1.5 bg-slate-900/80 border border-slate-700/80 pl-1.5 pr-1.5 py-1 rounded-xl backdrop-blur-xs shadow-sm">
+            <div 
+              className="w-7 h-7 bg-gradient-to-br from-blue-500 to-indigo-600 text-white rounded-lg flex items-center justify-center font-bold text-xs uppercase shadow-sm ring-1 ring-white/20 shrink-0"
+              title={appUser?.email || 'Quản trị viên'}
+            >
               {appUser?.email?.charAt(0).toUpperCase() || 'U'}
             </div>
-            <div className="text-left hidden xl:block">
-              <div className="text-xs font-bold text-slate-200 line-clamp-1 max-w-[110px] leading-tight">
+            <div className="text-left hidden 2xl:block pr-1">
+              <div className="text-xs font-bold text-slate-200 line-clamp-1 max-w-[100px] leading-tight">
                 Quản trị viên
-              </div>
-              <div className="text-[10px] text-slate-400 font-mono line-clamp-1 max-w-[115px] leading-none mt-0.5">
-                {appUser?.email}
               </div>
             </div>
             <button
               onClick={handleSignOutSystem}
-              className="p-1.5 text-slate-400 hover:text-red-400 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+              className="p-1 text-slate-400 hover:text-red-400 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
               title="Đăng xuất khỏi hệ thống"
             >
-              <LogOut size={14} />
+              <LogOut size={13} />
             </button>
           </div>
         </div>
       </header>
 
       {/* 2. HORIZONTAL MENU BAR: Clean navigation tabs stretching across the screen */}
-      <nav className="bg-white border-b border-slate-200 px-4 sm:px-6 lg:px-8 py-2 shrink-0 flex items-center justify-between gap-4 overflow-x-auto custom-scrollbar shadow-xs">
-        <div className="flex items-center gap-1.5 sm:gap-2">
+      <nav className="bg-white border-b border-slate-200 px-3 sm:px-6 lg:px-8 py-1.5 shrink-0 flex items-center justify-between gap-3 overflow-x-auto no-scrollbar shadow-xs min-h-[50px]">
+        <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
           <NavTabButton 
             active={activeTab === 'inventory'} 
             onClick={() => setActiveTab('inventory')} 
-            icon={<LayoutDashboard size={18} />} 
+            icon={<LayoutDashboard size={16} />} 
             label="Danh mục thiết bị" 
             badge={devices.length}
           />
           <NavTabButton 
             active={activeTab === 'charts'} 
             onClick={() => setActiveTab('charts')} 
-            icon={<BarChart3 size={18} />} 
+            icon={<BarChart3 size={16} />} 
             label="Biểu đồ thống kê" 
           />
           <NavTabButton 
             active={activeTab === 'maintenance'} 
             onClick={() => setActiveTab('maintenance')} 
-            icon={<Calendar size={18} />} 
+            icon={<Calendar size={16} />} 
             label="Lịch trình" 
             badge={scheduleCounts.total > 0 ? scheduleCounts.total : undefined}
             badgeColor="bg-red-100 text-red-600"
@@ -2210,34 +2241,34 @@ const DeviceDashboard: React.FC = () => {
           <NavTabButton 
             active={activeTab === 'legal'} 
             onClick={() => setActiveTab('legal')} 
-            icon={<ShieldCheck size={18} />} 
+            icon={<ShieldCheck size={16} />} 
             label="Hồ sơ pháp lý" 
           />
           <NavTabButton 
             active={activeTab === 'settings'} 
             onClick={() => setActiveTab('settings')} 
-            icon={<Settings size={18} />} 
+            icon={<Settings size={16} />} 
             label="Cài đặt hệ thống" 
           />
         </div>
 
         {/* Quick summary tracker on the right side of nav bar */}
-        <div className="hidden lg:flex items-center gap-4 text-xs font-medium text-slate-500 shrink-0">
-          <div className="flex items-center gap-1.5">
+        <div className="hidden xl:flex items-center gap-2.5 text-xs font-medium text-slate-500 shrink-0">
+          <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-slate-50 border border-slate-200/80">
             <span className="w-2 h-2 rounded-full bg-slate-400"></span>
             <span>Tổng: <strong className="text-slate-800">{stats.total}</strong></span>
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-red-50/70 border border-red-200/80 text-red-700">
             <span className="w-2 h-2 rounded-full bg-red-500"></span>
-            <span>Quá hạn: <strong className="text-red-600">{stats.expired}</strong></span>
+            <span>Quá hạn: <strong className="text-red-700 font-bold">{stats.expired}</strong></span>
           </div>
-          <div className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-orange-500"></span>
-            <span>Cận hạn: <strong className="text-orange-600">{stats.warning}</strong></span>
+          <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-amber-50/70 border border-amber-200/80 text-amber-800">
+            <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+            <span>Cận hạn: <strong className="text-amber-800 font-bold">{stats.warning}</strong></span>
           </div>
-          <div className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-green-500"></span>
-            <span>Hợp lệ: <strong className="text-green-600">{stats.ok}</strong></span>
+          <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-emerald-50/70 border border-emerald-200/80 text-emerald-800">
+            <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+            <span>Hợp lệ: <strong className="text-emerald-800 font-bold">{stats.ok}</strong></span>
           </div>
         </div>
       </nav>
@@ -2276,7 +2307,7 @@ const DeviceDashboard: React.FC = () => {
       )}
 
       {/* 3. MAIN CONTENT BODY: Full-width container */}
-      <main className="flex-1 px-4 sm:px-6 lg:px-8 py-5 overflow-y-auto flex flex-col gap-5 w-full max-w-full custom-scrollbar">
+      <main className="flex-1 px-3 sm:px-6 lg:px-8 py-3 sm:py-4 overflow-y-auto flex flex-col gap-4 w-full max-w-full custom-scrollbar min-h-0">
           {activeTab === 'inventory' ? (
             <>
               {/* Filtering & Table Container - Clean Full Height Table */}
@@ -2380,10 +2411,14 @@ const DeviceDashboard: React.FC = () => {
                         </button>
                         <button
                           type="button"
-                          onClick={() => fileInputRef.current?.click()}
+                          onClick={() => {
+                            setEditingDevice(null);
+                            setAddDeviceMode('excel');
+                            setIsModalOpen(true);
+                          }}
                           className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs sm:text-sm font-bold transition-all inline-flex items-center gap-2 cursor-pointer border border-slate-200"
                         >
-                          <Upload size={16} />
+                          <FileSpreadsheet size={16} />
                           <span>Nhập từ file Excel</span>
                         </button>
                         <button
@@ -2494,6 +2529,9 @@ const DeviceDashboard: React.FC = () => {
                 setSyncCounter(c => c + 1);
               }}
               onClearAllData={handleClearAllData}
+              hospitalLogoConfig={hospitalLogoConfig}
+              setHospitalLogoConfig={setHospitalLogoConfig}
+              onSaveHospitalLogoConfig={handleSaveHospitalLogoConfig}
             />
           ) : (
             <LegalDocumentsPanel 
@@ -2560,7 +2598,7 @@ const DeviceDashboard: React.FC = () => {
               exit={{ opacity: 0, scale: 0.9, y: 20 }}
               className="relative w-full max-w-3xl bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
             >
-              <div className="px-8 py-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <div className="px-8 py-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
                 <div>
                   <h2 className="text-xl font-bold text-slate-800">
                     {editingDevice ? 'Chỉnh sửa thiết bị' : 'Thêm thiết bị mới'}
@@ -2569,18 +2607,105 @@ const DeviceDashboard: React.FC = () => {
                 </div>
                 <button 
                   onClick={() => setIsModalOpen(false)}
-                  className="p-2 hover:bg-slate-200 rounded-full transition-colors text-slate-400"
+                  className="p-2 hover:bg-slate-200 rounded-full transition-colors text-slate-400 cursor-pointer"
                 >
                   <X size={20} />
                 </button>
               </div>
 
-              <div className="flex-1 overflow-auto p-8">
-                <DeviceForm 
-                  initialData={editingDevice || undefined} 
-                  onSave={handleSaveDevice} 
-                  onCancel={() => setIsModalOpen(false)} 
-                />
+              {/* Mode switch tabs: Manual form vs Excel Bulk Import */}
+              {!editingDevice && (
+                <div className="px-8 pt-3 bg-slate-50/70 border-b border-slate-200/80 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setAddDeviceMode('form')}
+                    className={`pb-2.5 px-3 text-xs sm:text-sm font-bold border-b-2 transition-all flex items-center gap-2 cursor-pointer ${
+                      addDeviceMode === 'form'
+                        ? 'border-blue-600 text-blue-600'
+                        : 'border-transparent text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    <Plus size={15} />
+                    <span>Nhập biểu mẫu thủ công</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAddDeviceMode('excel')}
+                    className={`pb-2.5 px-3 text-xs sm:text-sm font-bold border-b-2 transition-all flex items-center gap-2 cursor-pointer ${
+                      addDeviceMode === 'excel'
+                        ? 'border-blue-600 text-blue-600'
+                        : 'border-transparent text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    <FileSpreadsheet size={15} />
+                    <span>Nhập từ file Excel (.xlsx)</span>
+                    <span className="text-[10px] font-extrabold uppercase px-1.5 py-0.2 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200">
+                      Hàng loạt
+                    </span>
+                  </button>
+                </div>
+              )}
+
+              <div className="flex-1 overflow-auto p-6 sm:p-8">
+                {editingDevice || addDeviceMode === 'form' ? (
+                  <>
+                    {!editingDevice && (
+                      <div className="mb-6 p-3 bg-blue-50/60 border border-blue-100 rounded-xl flex items-center justify-between text-xs text-blue-900">
+                        <div className="flex items-center gap-2">
+                          <FileSpreadsheet size={16} className="text-blue-600 shrink-0" />
+                          <span>Bạn có sẵn danh sách nhiều thiết bị trong Excel?</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setAddDeviceMode('excel')}
+                          className="font-bold text-blue-700 hover:text-blue-900 underline cursor-pointer ml-2 whitespace-nowrap"
+                        >
+                          Chuyển sang Nhập file Excel &rarr;
+                        </button>
+                      </div>
+                    )}
+                    <DeviceForm 
+                      initialData={editingDevice || undefined} 
+                      onSave={handleSaveDevice} 
+                      onCancel={() => setIsModalOpen(false)} 
+                    />
+                  </>
+                ) : (
+                  <DeviceExcelImport
+                    authUid={auth.currentUser?.uid}
+                    onDownloadTemplate={handleExportExcel}
+                    onSwitchToManual={() => setAddDeviceMode('form')}
+                    onCancel={() => setIsModalOpen(false)}
+                    onImportComplete={async (importedList) => {
+                      if (auth.currentUser) {
+                        for (const d of importedList) {
+                          try {
+                            await saveDeviceToFirestore(auth.currentUser.uid, d);
+                          } catch (err) {
+                            console.warn('Lỗi lưu thiết bị vào Firestore:', err);
+                          }
+                        }
+                      }
+                      setDevices(prev => [...prev, ...importedList]);
+                      const newLog: ActivityLog = {
+                        id: `excel-log-${Date.now()}`,
+                        deviceId: importedList[0]?.id || 'bulk',
+                        date: new Date().toISOString().split('T')[0],
+                        user: appUser?.email || 'Quản trị viên',
+                        type: 'CREATE',
+                        categoryLabel: 'Nhập Excel',
+                        description: `Đã nhập hàng loạt ${importedList.length} thiết bị từ file Excel vào danh mục.`,
+                        notes: 'Nhập từ file Excel trong mục Thêm thiết bị'
+                      };
+                      setActivityLogs(prev => [newLog, ...prev]);
+                      setToastNotification({
+                        type: 'success',
+                        message: `Đã nhập thành công ${importedList.length} thiết bị từ file Excel!`
+                      });
+                      setIsModalOpen(false);
+                    }}
+                  />
+                )}
               </div>
             </motion.div>
           </div>
@@ -3648,9 +3773,9 @@ const NavTabButton = ({
 }) => (
   <button 
     onClick={onClick}
-    className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all cursor-pointer whitespace-nowrap select-none ${
+    className={`inline-flex items-center gap-1.5 sm:gap-2 px-3 py-2 sm:px-3.5 sm:py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all cursor-pointer whitespace-nowrap select-none shrink-0 ${
       active 
-        ? 'bg-blue-600 text-white shadow-sm shadow-blue-500/30' 
+        ? 'bg-blue-600 text-white shadow-sm shadow-blue-500/25' 
         : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
     }`}
   >
@@ -4960,6 +5085,9 @@ interface SettingsPanelProps {
   firestorePermissionError?: boolean;
   onRetryFirestoreSync?: () => void;
   onClearAllData?: () => void;
+  hospitalLogoConfig: HospitalLogoConfig;
+  setHospitalLogoConfig: React.Dispatch<React.SetStateAction<HospitalLogoConfig>>;
+  onSaveHospitalLogoConfig: (newConfig?: HospitalLogoConfig) => void;
 }
 
 const SettingsPanel: React.FC<SettingsPanelProps> = ({
@@ -4997,7 +5125,10 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   setChannels,
   onOpenFirestoreRulesModal,
   firestorePermissionError,
-  onRetryFirestoreSync
+  onRetryFirestoreSync,
+  hospitalLogoConfig,
+  setHospitalLogoConfig,
+  onSaveHospitalLogoConfig
 }) => {
   const email = recipientEmail;
   const setEmail = setRecipientEmail;
@@ -5148,6 +5279,13 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   return (
     <div className="flex-1 overflow-y-auto w-full custom-scrollbar">
       <div className="max-w-3xl mx-auto w-full space-y-8 py-8 px-4">
+        {/* SECTION 0: TÙY CHỌN LOGO BỆNH VIỆN & NHẬN DIỆN CƠ SỞ Y TẾ */}
+        <HospitalLogoSettingsSection 
+          config={hospitalLogoConfig}
+          onChange={setHospitalLogoConfig}
+          onSave={onSaveHospitalLogoConfig}
+        />
+
         {/* SECTION 1: Notification settings */}
       <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="p-8 border-b border-slate-100 bg-slate-50/50">
